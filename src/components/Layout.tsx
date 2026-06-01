@@ -1,17 +1,18 @@
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import type { FileStock } from '../lib/types'
+import { useRepo } from '../hooks/useRepo'
 
 interface LayoutProps {
   children: ReactNode
-  stocks: FileStock[]
-  repoName: string
-  onRepoCleared?: () => void
 }
 
-export default function Layout({ children, stocks, repoName, onRepoCleared }: LayoutProps) {
+export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const isHome = location.pathname === '/'
+  const { activeRepo, wsConnected } = useRepo()
+
+  const stocks = activeRepo?.stocks || []
+  const repoName = activeRepo?.name || ''
 
   const activeStocks = stocks.filter(s => s.status === 'active').length
   const ipoStocks = stocks.filter(s => s.status === 'ipo').length
@@ -57,6 +58,14 @@ export default function Layout({ children, stocks, repoName, onRepoCleared }: La
           </div>
 
           <div className="flex items-center gap-6 text-xs font-mono">
+            {/* WebSocket 状态 */}
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-ex-green' : 'bg-ex-red'}`} />
+              <span className="text-ex-dim">{wsConnected ? 'CONNECTED' : 'DISCONNECTED'}</span>
+            </div>
+
+            <div className="h-5 w-px bg-ex-border" />
+
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-ex-green animate-pulse" />
               <span className="text-ex-dim">ACTIVE</span>
@@ -76,17 +85,6 @@ export default function Layout({ children, stocks, repoName, onRepoCleared }: La
               <>
                 <div className="h-5 w-px bg-ex-border" />
                 <span className="text-ex-accent truncate max-w-[200px]">{repoName}</span>
-                {onRepoCleared && (
-                  <button
-                    onClick={onRepoCleared}
-                    className="ml-1 text-ex-dim hover:text-ex-red transition-colors cursor-pointer shrink-0"
-                    title="Switch repository"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M18 6L6 18M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
               </>
             )}
           </div>

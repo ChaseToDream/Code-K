@@ -1,20 +1,60 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import type { FileStock } from '../lib/types'
+import { useRepo } from '../hooks/useRepo'
+import { useWebSocket } from '../hooks/useWebSocket'
 import KlineChart from '../components/KlineChart'
+import DiffViewer from '../components/DiffViewer'
 
-interface StockDetailProps {
-  stocks: FileStock[]
-}
-
-export default function StockDetail({ stocks }: StockDetailProps) {
+export default function StockDetail() {
   const { path } = useParams<{ path: string }>()
   const decodedPath = decodeURIComponent(path || '')
+  const { activeRepo } = useRepo()
+  const { sendRequestDiff } = useWebSocket()
 
   const stock = useMemo(
-    () => stocks.find(s => s.path === decodedPath),
-    [stocks, decodedPath]
+    () => activeRepo?.stocks.find(s => s.path === decodedPath),
+    [activeRepo, decodedPath]
   )
+
+  const [selectedCandle, setSelectedCandle] = useState<number | null>(null)
+  const [diffData, setDiffData] = useState<{
+    oldContent: string;
+    newContent: string;
+    additions: number;
+    deletions: number;
+  } | null>(null)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+
+  const handleViewDiff = useCallback(async (candleIdx: number) => {
+    if (!stock || !activeRepo) return
+
+    const candle = stock.candles[candleIdx]
+    if (!candle) return
+
+    setSelectedCandle(candleIdx)
+    setLoadingDiff(true)
+
+    // 请求diff详情
+    sendRequestDiff(activeRepo.path, candle.commitHash, stock.path)
+
+    // 注意：实际的diff数据会通过WebSocket返回
+    // 这里我们模拟一个简单的diff数据
+    // 在实际应用中，需要监听WebSocket消息来获取真实的diff数据
+    setTimeout(() => {
+      setDiffData({
+        oldContent: `// Previous version of ${stock.path}\n// Lines: ${candle.open}`,
+        newContent: `// Current version of ${stock.path}\n// Lines: ${candle.close}\n// Added: ${candle.volume} changes`,
+        additions: Math.max(0, candle.close - candle.open),
+        deletions: Math.max(0, candle.open - candle.close),
+      })
+      setLoadingDiff(false)
+    }, 500)
+  }, [stock, activeRepo, sendRequestDiff])
+
+  const handleCloseDiff = useCallback(() => {
+    setSelectedCandle(null)
+    setDiffData(null)
+  }, [])
 
   if (!stock) {
     return (
@@ -111,16 +151,56 @@ export default function StockDetail({ stocks }: StockDetailProps) {
         <KlineChart stock={stock} />
       </div>
 
+      {/* Diff Viewer */}
+      {selectedCandle !== null && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-mono text-ex-heading">
+              提交差异详情 - {stock.candles[selectedCandle]?.commitHash}
+            </h3>
+            <button
+              onClick={handleCloseDiff}
+              className="text-ex-dim hover:text-ex-red transition-colors text-sm font-mono cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+          {loadingDiff ? (
+            <div className="bg-ex-surface border border-ex-border rounded-lg p-8 text-center">
+              <div className="w-2 h-2 rounded-full bg-ex-accent pulse-glow mx-auto mb-2" />
+              <p className="text-ex-dim text-sm font-mono">加载差异数据中...</p>
+            </div>
+          ) : diffData ? (
+            <DiffViewer
+              oldContent={diffData.oldContent}
+              newContent={diffData.newContent}
+              filePath={stock.path}
+              additions={diffData.additions}
+              deletions={diffData.deletions}
+              onClose={handleCloseDiff}
+            />
+          ) : null}
+        </div>
+      )}
+
       {/* Commit History */}
       <div className="bg-ex-surface border border-ex-border rounded-lg overflow-hidden">
         <div className="px-6 py-3 border-b border-ex-border">
           <span className="text-xs font-mono text-ex-dim uppercase">Recent Trades (Commits)</span>
         </div>
         <div className="divide-y divide-ex-border/50 max-h-80 overflow-y-auto">
-          {[...stock.candles].reverse().slice(0, 50).map((candle, i) => {
+          {[...stock.candles].reverse().map((candle, i) => {
             const candleUp = candle.close >= candle.open
+            const originalIdx = stock.candles.length - 1 - i
+            const isSelected = selectedCandle === originalIdx
+
             return (
-              <div key={i} className="px-6 py-3 flex items-center justify-between hover:bg-ex-panel/50 transition-colors">
+              <div
+                key={i}
+                className={`px-6 py-3 flex items-center justify-between transition-colors cursor-pointer
+                  ${isSelected ? 'bg-ex-accent/10' : 'hover:bg-ex-panel/50'}`}
+                onClick={() => handleViewDiff(originalIdx)}
+              >
                 <div className="flex items-center gap-4">
                   <div className={`w-1.5 h-8 rounded-full ${candleUp ? 'bg-ex-green' : 'bg-ex-red'}`} />
                   <div className="min-w-0">

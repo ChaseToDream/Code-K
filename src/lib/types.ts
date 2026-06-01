@@ -39,6 +39,7 @@ export interface FileStock {
   totalAdditions: number;
   totalDeletions: number;
   changePercent: number;  // latest candle change %
+  repoId: string;        // 所属仓库ID
 }
 
 export interface ParseProgress {
@@ -47,3 +48,106 @@ export interface ParseProgress {
   total: number;
   message: string;
 }
+
+// 仓库信息
+export interface RepoInfo {
+  id: string;        // 唯一标识
+  path: string;
+  name: string;
+  status: 'idle' | 'parsing' | 'ready' | 'error';
+  progress?: ParseProgress;
+  stocks: FileStock[];
+  error?: string;
+}
+
+// 提交详情（用于diff查看）
+export interface CommitDetail {
+  hash: string;
+  message: string;
+  author: string;
+  timestamp: number;
+  files: FileDiffDetail[];
+}
+
+export interface FileDiffDetail {
+  path: string;
+  additions: number;
+  deletions: number;
+  oldContent?: string;
+  newContent?: string;
+}
+
+// WebSocket 消息类型
+export interface ProgressMessage {
+  type: 'progress';
+  repoId: string;
+  phase: 'reading' | 'parsing' | 'diffing' | 'building';
+  current: number;
+  total: number;
+  message: string;
+}
+
+export interface PartialResultMessage {
+  type: 'partial';
+  repoId: string;
+  stocks: FileStock[];
+  latestCommit: CommitDiff;
+}
+
+export interface CompleteMessage {
+  type: 'complete';
+  repoId: string;
+  repoName: string;
+  stocks: FileStock[];
+  totalCommits: number;
+  totalTime: number;
+}
+
+export interface ErrorMessage {
+  type: 'error';
+  repoId?: string;
+  message: string;
+  code: 'INVALID_REPO' | 'PARSE_FAILED' | 'NETWORK_ERROR' | 'UNKNOWN_TYPE' | 'PROCESSING_ERROR' | 'DIFF_FAILED';
+}
+
+export interface DiffDetailMessage {
+  type: 'diff_detail';
+  commitHash: string;
+  filePath: string;
+  oldContent: string;
+  newContent: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface ParseStartedMessage {
+  type: 'parse_started';
+  repoId: string;
+  repoName: string;
+}
+
+export interface ParseStoppedMessage {
+  type: 'parse_stopped';
+}
+
+export type ServerMessage = ProgressMessage | PartialResultMessage | CompleteMessage | ErrorMessage | DiffDetailMessage | ParseStartedMessage | ParseStoppedMessage;
+
+export interface StartParseMessage {
+  type: 'start_parse';
+  repoPath: string;
+  repoName: string;
+  maxCommits?: number;
+}
+
+export interface StopParseMessage {
+  type: 'stop_parse';
+}
+
+export interface RequestDiffDetail {
+  type: 'request_diff';
+  repoPath: string;
+  commitHash: string;
+  filePath: string;
+}
+
+export type ClientMessage = StartParseMessage | StopParseMessage | RequestDiffDetail;

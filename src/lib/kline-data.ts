@@ -1,6 +1,6 @@
 import type { CandleData, CommitDiff, FileStock } from './types';
 
-export function buildFileStocks(commits: CommitDiff[]): FileStock[] {
+export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): FileStock[] {
   // Track each file's state across commits (chronological order = oldest first)
   const fileData = new Map<string, {
     path: string;
@@ -131,6 +131,7 @@ export function buildFileStocks(commits: CommitDiff[]): FileStock[] {
       totalAdditions: state.totalAdditions,
       totalDeletions: state.totalDeletions,
       changePercent,
+      repoId,
     });
   }
 

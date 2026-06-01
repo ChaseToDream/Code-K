@@ -1,18 +1,15 @@
 import { useCallback, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useRepo } from '../hooks/useRepo'
 
 interface RepoInfo {
   path: string
   name: string
 }
 
-interface HomeProps {
-  onRepoSelected: (repoPath: string, name: string) => void
-  onNavigate: () => void
-}
-
-export default function Home({ onRepoSelected }: HomeProps) {
+export default function Home() {
   const navigate = useNavigate()
+  const { startParsing, wsConnected } = useRepo()
   const [repos, setRepos] = useState<RepoInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
@@ -20,54 +17,6 @@ export default function Home({ onRepoSelected }: HomeProps) {
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
-
-  const handleBrowseFolder = useCallback(async () => {
-    try {
-      const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' })
-      const name = dirHandle.name
-      setSelectedFolder(name)
-      setError(null)
-      setVerifying(true)
-
-      // Search backend for folders matching this name
-      const res = await fetch(`/api/resolve?name=${encodeURIComponent(name)}`)
-      const data = await res.json()
-
-      if (data.repos && data.repos.length > 0) {
-        if (data.repos.length === 1) {
-          // Single match - auto select
-          await handleSelectRepo(data.repos[0])
-        } else {
-          // Multiple matches - show them in the repo list
-          setRepos(data.repos)
-          setLoading(false)
-        }
-      } else {
-        setError(`未找到 "${name}" 文件夹下的 Git 仓库，请手动输入路径`)
-        setRepos([])
-        setLoading(false)
-      }
-      setVerifying(false)
-    } catch (err: unknown) {
-      if (err instanceof DOMException && (err as any).name === 'AbortError') return
-      setError(err instanceof Error ? err.message : '选择失败')
-      setVerifying(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    setLoading(true)
-    fetch('/api/discover')
-      .then((r) => r.json())
-      .then((data) => {
-        setRepos(data.repos || [])
-        setLoading(false)
-      })
-      .catch(() => {
-        setError('无法连接后端服务器，请先运行: npm run server')
-        setLoading(false)
-      })
-  }, [])
 
   const handleSelectRepo = useCallback(
     async (repo: RepoInfo) => {
@@ -83,7 +32,9 @@ export default function Home({ onRepoSelected }: HomeProps) {
         if (!Array.isArray(data) || data.length === 0) {
           throw new Error('没有找到提交记录')
         }
-        onRepoSelected(repo.path, repo.name)
+        
+        // 开始解析并跳转
+        startParsing(repo.path, repo.name)
         navigate('/market')
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : '验证失败')
@@ -91,8 +42,66 @@ export default function Home({ onRepoSelected }: HomeProps) {
         setVerifying(false)
       }
     },
-    [navigate, onRepoSelected],
+    [navigate, startParsing],
   )
+
+  const handleBrowseFolder = useCallback(async () => {
+    try {
+      const dirHandle = await (window as unknown as { showDirectoryPicker: (options?: { mode?: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({ mode: 'read' })
+      const name = dirHandle.name
+      setSelectedFolder(name)
+      setError(null)
+      setVerifying(true)
+
+      const res = await fetch(`/api/resolve?name=${encodeURIComponent(name)}`)
+      const data = await res.json()
+
+      if (data.repos && data.repos.length > 0) {
+        if (data.repos.length === 1) {
+          await handleSelectRepo(data.repos[0])
+        } else {
+          setRepos(data.repos)
+          setLoading(false)
+        }
+      } else {
+        setError(`未找到 "${name}" 文件夹下的 Git 仓库，请手动输入路径`)
+        setRepos([])
+        setLoading(false)
+      }
+      setVerifying(false)
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setError(err instanceof Error ? err.message : '选择失败')
+      setVerifying(false)
+    }
+  }, [handleSelectRepo])
+
+  // 使用 useEffect 获取仓库列表
+  useEffect(() => {
+    let cancelled = false;
+    
+    const fetchRepos = async () => {
+      try {
+        const r = await fetch('/api/discover')
+        const data = await r.json()
+        if (!cancelled) {
+          setRepos(data.repos || [])
+          setLoading(false)
+        }
+      } catch {
+        if (!cancelled) {
+          setError('无法连接后端服务器，请先运行: npm run server')
+          setLoading(false)
+        }
+      }
+    }
+
+    fetchRepos()
+    
+    return () => {
+      cancelled = true;
+    }
+  }, [])
 
   const handleCustomPath = useCallback(async () => {
     if (!customPath.trim()) return
@@ -119,6 +128,12 @@ export default function Home({ onRepoSelected }: HomeProps) {
           <span className="font-[Orbitron] text-2xl font-black text-ex-heading glow-accent tracking-wider">CODEX</span>
           <span className="text-xs text-ex-dim font-mono tracking-[0.2em]">代码交易所</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-ex-green' : 'bg-ex-red'}`} />
+          <span className="text-xs font-mono text-ex-dim">
+            {wsConnected ? '已连接' : '未连接'}
+          </span>
+        </div>
       </div>
 
       <div className="relative z-10 flex-1 overflow-auto p-8">
@@ -133,9 +148,11 @@ export default function Home({ onRepoSelected }: HomeProps) {
           <div className="flex justify-center">
             <button
               onClick={handleBrowseFolder}
+              disabled={!wsConnected}
               className="group relative px-8 py-3 bg-ex-accent/10 border border-ex-accent/30 rounded-lg
                 text-ex-accent font-mono text-sm tracking-wider
-                hover:bg-ex-accent/20 hover:border-ex-accent/50 transition-all duration-300 cursor-pointer"
+                hover:bg-ex-accent/20 hover:border-ex-accent/50 transition-all duration-300 cursor-pointer
+                disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className="flex items-center gap-3">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -187,7 +204,7 @@ export default function Home({ onRepoSelected }: HomeProps) {
             />
             <button
               onClick={handleCustomPath}
-              disabled={!customPath.trim() || verifying}
+              disabled={!customPath.trim() || verifying || !wsConnected}
               className="px-5 py-2.5 bg-ex-accent/20 border border-ex-accent/40 rounded-lg
                 text-ex-accent font-mono text-sm disabled:opacity-30 disabled:cursor-not-allowed
                 hover:bg-ex-accent/30 transition-colors cursor-pointer"
@@ -224,8 +241,10 @@ export default function Home({ onRepoSelected }: HomeProps) {
                   <button
                     key={repo.path}
                     onClick={() => handleSelectRepo(repo)}
+                    disabled={!wsConnected}
                     className="bg-ex-surface border border-ex-border rounded-lg p-4 text-left
-                      hover:border-ex-accent/50 hover:bg-ex-panel/50 transition-all group cursor-pointer"
+                      hover:border-ex-accent/50 hover:bg-ex-panel/50 transition-all group cursor-pointer
+                      disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-lg bg-ex-accent/10 flex items-center justify-center shrink-0
