@@ -1,4 +1,4 @@
-import * as git from 'isomorphic-git'
+// isomorphic-git 类型参考，实际使用自定义 FS 适配器
 import type { CommitDiff, CommitInfo, FileChange, ParseProgress } from './types'
 
 type ProgressCallback = (progress: ParseProgress) => void
@@ -261,7 +261,7 @@ async function readGitObject(fs: WebFsAdapter, oid: string): Promise<{ type: str
   // 解析 header: "type size\0content"
   const nullIndex = result.indexOf(0)
   const header = new TextDecoder().decode(result.slice(0, nullIndex))
-  const [type, sizeStr] = header.split(' ')
+  const [type] = header.split(' ')
   const content = result.slice(nullIndex + 1)
 
   return { type, content }
