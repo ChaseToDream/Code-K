@@ -4,7 +4,6 @@ import type { CommitDiff, CommitInfo, FileChange, ParseProgress } from './types'
 type ProgressCallback = (progress: ParseProgress) => void
 type CommitsCallback = (commits: CommitDiff[]) => void
 
-// Minimal fs.Stats-compatible wrapper
 class FakeStats {
   size: number
   mode: number
@@ -23,15 +22,40 @@ class FakeStats {
   isSymbolicLink(): boolean { return false }
 }
 
-// Custom FS adapter using File System Access API
 class WebFsAdapter {
   private rootDir: FileSystemDirectoryHandle
   private dirCache = new Map<string, FileSystemDirectoryHandle>()
+  promises: {
+    readFile: (filepath: string, options?: { encoding?: string }) => Promise<Uint8Array | string>
+    writeFile: (filepath: string, data: Uint8Array | string) => Promise<void>
+    mkdir: (dirpath: string) => Promise<void>
+    rmdir: (dirpath: string) => Promise<void>
+    readdir: (dirpath: string) => Promise<string[]>
+    stat: (filepath: string) => Promise<FakeStats>
+    lstat: (filepath: string) => Promise<FakeStats>
+    readlink: () => Promise<string>
+    symlink: () => Promise<void>
+    chmod: () => Promise<void>
+    unlink: (filepath: string) => Promise<void>
+  }
 
   constructor(rootDir: FileSystemDirectoryHandle) {
     this.rootDir = rootDir
     this.dirCache.set('/', rootDir)
     this.dirCache.set('.', rootDir)
+    this.promises = {
+      readFile: this.readFile.bind(this),
+      writeFile: this.writeFile.bind(this),
+      mkdir: this.mkdir.bind(this),
+      rmdir: this.rmdir.bind(this),
+      readdir: this.readdir.bind(this),
+      stat: this.stat.bind(this),
+      lstat: this.lstat.bind(this),
+      readlink: this.readlink.bind(this),
+      symlink: this.symlink.bind(this),
+      chmod: this.chmod.bind(this),
+      unlink: this.unlink.bind(this),
+    }
   }
 
   private splitPath(filepath: string): string[] {
@@ -135,25 +159,8 @@ class WebFsAdapter {
     const [dir, name] = await this.getParentAndName(filepath)
     await (dir as unknown as { removeEntry: (name: string) => Promise<void> }).removeEntry(name)
   }
-
-  get promises() {
-    return {
-      readFile: this.readFile.bind(this),
-      writeFile: this.writeFile.bind(this),
-      mkdir: this.mkdir.bind(this),
-      rmdir: this.rmdir.bind(this),
-      readdir: this.readdir.bind(this),
-      stat: this.stat.bind(this),
-      lstat: this.lstat.bind(this),
-      readlink: this.readlink.bind(this),
-      symlink: this.symlink.bind(this),
-      chmod: this.chmod.bind(this),
-      unlink: this.unlink.bind(this),
-    }
-  }
 }
 
-// Fast line diff
 function fastDiff(oldText: string, newText: string): { additions: number; deletions: number } {
   const oldLines = oldText.split('\n')
   const newLines = newText.split('\n')
@@ -218,7 +225,100 @@ function lcsDiff(oldLines: string[], newLines: string[], m: number, n: number): 
   }
 }
 
-// Tree cache helper
+// 手动解析 git 对象（zlib 解压）
+async function readGitObject(fs: WebFsAdapter, oid: string): Promise<{ type: string; content: Uint8Array }> {
+  const path = `.git/objects/${oid.slice(0, 2)}/${oid.slice(2)}`
+  const data = await fs.promises.readFile(path) as Uint8Array
+
+  // 使用 DecompressionStream 解压 zlib
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(data)
+      controller.close()
+    }
+  })
+
+  const decompressed = stream.pipeThrough(new DecompressionStream('deflate'))
+  const reader = decompressed.getReader()
+  const chunks: Uint8Array[] = []
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+  }
+
+  // 合并 chunks
+  let totalLength = 0
+  for (const chunk of chunks) totalLength += chunk.length
+  const result = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    result.set(chunk, offset)
+    offset += chunk.length
+  }
+
+  // 解析 header: "type size\0content"
+  const nullIndex = result.indexOf(0)
+  const header = new TextDecoder().decode(result.slice(0, nullIndex))
+  const [type, sizeStr] = header.split(' ')
+  const content = result.slice(nullIndex + 1)
+
+  return { type, content }
+}
+
+// 手动解析 commit 对象
+function parseCommit(content: Uint8Array): { tree: string; parent: string[]; author: { name: string; email: string; timestamp: number; timezoneOffset: number }; committer: { name: string; email: string; timestamp: number; timezoneOffset: number }; message: string } {
+  const text = new TextDecoder().decode(content)
+  const lines = text.split('\n')
+
+  let tree = ''
+  const parents: string[] = []
+  let author: { name: string; email: string; timestamp: number; timezoneOffset: number } | null = null
+  let committer: { name: string; email: string; timestamp: number; timezoneOffset: number } | null = null
+  let messageStart = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line === '') {
+      messageStart = i + 1
+      break
+    }
+    if (line.startsWith('tree ')) {
+      tree = line.slice(5)
+    } else if (line.startsWith('parent ')) {
+      parents.push(line.slice(7))
+    } else if (line.startsWith('author ')) {
+      author = parsePerson(line.slice(7))
+    } else if (line.startsWith('committer ')) {
+      committer = parsePerson(line.slice(10))
+    }
+  }
+
+  const message = lines.slice(messageStart).join('\n')
+
+  return {
+    tree,
+    parent: parents,
+    author: author || { name: '', email: '', timestamp: 0, timezoneOffset: 0 },
+    committer: committer || { name: '', email: '', timestamp: 0, timezoneOffset: 0 },
+    message
+  }
+}
+
+function parsePerson(line: string): { name: string; email: string; timestamp: number; timezoneOffset: number } {
+  // Format: "Name <email> timestamp timezone"
+  const emailMatch = line.match(/<([^>]+)>/)
+  const email = emailMatch ? emailMatch[1] : ''
+  const name = line.slice(0, line.indexOf('<')).trim()
+
+  const parts = line.split(' ')
+  const timestamp = parseInt(parts[parts.length - 2] || '0', 10)
+  const timezoneOffset = parseInt(parts[parts.length - 1] || '0', 10)
+
+  return { name, email, timestamp, timezoneOffset }
+}
+
 interface TreeEntry {
   path: string
   type: string
@@ -234,30 +334,68 @@ async function getCachedTree(
   if (cached) return cached
 
   const files = new Map<string, string>()
-  const entries = await git.readTree({ fs, dir: '.', oid: treeOid })
 
-  async function walk(items: TreeEntry[], prefix: string) {
-    for (const item of items) {
-      const fullPath = prefix ? `${prefix}/${item.path}` : item.path
-      if (item.type === 'blob') {
-        files.set(fullPath, item.oid)
-      } else if (item.type === 'tree') {
-        try {
-          const subtree = await git.readTree({ fs, dir: '.', oid: item.oid })
-          await walk(subtree.tree as TreeEntry[], fullPath)
-        } catch {
-          // skip unreadable trees
+  try {
+    const { content } = await readGitObject(fs, treeOid)
+    const entries = parseTree(content)
+
+    async function walk(items: TreeEntry[], prefix: string) {
+      for (const item of items) {
+        const fullPath = prefix ? `${prefix}/${item.path}` : item.path
+        if (item.type === 'blob') {
+          files.set(fullPath, item.oid)
+        } else if (item.type === 'tree') {
+          try {
+            const { content } = await readGitObject(fs, item.oid)
+            const subtree = parseTree(content)
+            await walk(subtree, fullPath)
+          } catch {
+            // skip unreadable trees
+          }
         }
       }
     }
+
+    await walk(entries, '')
+  } catch (err) {
+    console.error('[git-worker] Failed to read tree:', treeOid, (err as Error).message)
   }
 
-  await walk(entries.tree as TreeEntry[], '')
   cache.set(treeOid, files)
   return files
 }
 
-// Blob cache helper
+function parseTree(content: Uint8Array): TreeEntry[] {
+  const entries: TreeEntry[] = []
+  let offset = 0
+
+  while (offset < content.length) {
+    // Find space (mode ends with space)
+    const spaceIndex = content.indexOf(0x20, offset)
+    if (spaceIndex === -1) break
+
+    const mode = new TextDecoder().decode(content.slice(offset, spaceIndex))
+    offset = spaceIndex + 1
+
+    // Find null (path ends with null)
+    const nullIndex = content.indexOf(0, offset)
+    if (nullIndex === -1) break
+
+    const path = new TextDecoder().decode(content.slice(offset, nullIndex))
+    offset = nullIndex + 1
+
+    // Read 20 bytes for oid
+    const oidBytes = content.slice(offset, offset + 20)
+    const oid = Array.from(oidBytes).map(b => b.toString(16).padStart(2, '0')).join('')
+    offset += 20
+
+    const type = mode === '40000' ? 'tree' : 'blob'
+    entries.push({ path, type, oid })
+  }
+
+  return entries
+}
+
 async function getCachedBlob(
   fs: WebFsAdapter,
   oid: string,
@@ -266,10 +404,84 @@ async function getCachedBlob(
   const cached = cache.get(oid)
   if (cached !== undefined) return cached
 
-  const content = await git.readBlob({ fs, dir: '.', oid })
-  const text = new TextDecoder().decode(content.blob)
-  cache.set(oid, text)
-  return text
+  try {
+    const { content } = await readGitObject(fs, oid)
+    const text = new TextDecoder().decode(content)
+    cache.set(oid, text)
+    return text
+  } catch (err) {
+    console.error('[git-worker] Failed to read blob:', oid, (err as Error).message)
+    cache.set(oid, '')
+    return ''
+  }
+}
+
+async function resolveHeadOid(fs: WebFsAdapter): Promise<string> {
+  const headContent = await fs.promises.readFile('.git/HEAD', { encoding: 'utf8' }) as string
+  const trimmed = headContent.trim()
+
+  if (trimmed.startsWith('ref: ')) {
+    const refPath = trimmed.slice(5)
+    try {
+      const refContent = await fs.promises.readFile(`.git/${refPath}`, { encoding: 'utf8' }) as string
+      return refContent.trim()
+    } catch {
+      try {
+        const packedRefs = await fs.promises.readFile('.git/packed-refs', { encoding: 'utf8' }) as string
+        for (const line of packedRefs.split('\n')) {
+          const parts = line.trim().split(' ')
+          if (parts.length === 2 && parts[1] === refPath) {
+            return parts[0]
+          }
+        }
+      } catch {
+        // no packed-refs
+      }
+      throw new Error(`无法解析 Git 引用: ${refPath}`)
+    }
+  }
+
+  if (/^[0-9a-f]{40}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  throw new Error(`无法解析 .git/HEAD: ${trimmed}`)
+}
+
+async function walkCommitChain(
+  fs: WebFsAdapter,
+  headOid: string,
+  maxCommits: number,
+  onProgress?: (count: number) => void
+): Promise<Array<{ oid: string; commit: ReturnType<typeof parseCommit> }>> {
+  const logs: Array<{ oid: string; commit: ReturnType<typeof parseCommit> }> = []
+  let currentOid: string | undefined = headOid
+  const seen = new Set<string>()
+
+  while (currentOid && logs.length < maxCommits && !seen.has(currentOid)) {
+    seen.add(currentOid)
+    try {
+      const { type, content } = await readGitObject(fs, currentOid)
+      if (type !== 'commit') {
+        console.error(`[git-worker] Object ${currentOid} is not a commit, type: ${type}`)
+        break
+      }
+      const commit = parseCommit(content)
+      logs.push({ oid: currentOid, commit })
+      onProgress?.(logs.length)
+
+      if (commit.parent.length > 0) {
+        currentOid = commit.parent[0]
+      } else {
+        break
+      }
+    } catch (err) {
+      console.error(`[git-worker] readCommit failed for ${currentOid}:`, (err as Error).message)
+      break
+    }
+  }
+
+  return logs
 }
 
 export async function parseGitRepo(
@@ -290,9 +502,34 @@ export async function parseGitRepo(
     throw new Error('Not a git repository: .git directory not found')
   }
 
-  onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Parsing commit history...', startTime })
+  onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Resolving HEAD...', startTime })
 
-  const logs = await git.log({ fs, dir: '.', depth: maxCommits })
+  let headOid: string
+  try {
+    headOid = await resolveHeadOid(fs)
+    console.log('[git-worker] resolveHeadOid success:', headOid)
+  } catch (headErr) {
+    console.warn('[git-worker] resolveHeadOid failed:', (headErr as Error).message)
+    throw new Error(`无法解析 Git HEAD: ${(headErr as Error).message}`)
+  }
+
+  onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Walking commit chain...', startTime })
+
+  const logs = await walkCommitChain(fs, headOid, maxCommits, (count) => {
+    onProgress?.({
+      phase: 'parsing',
+      current: count,
+      total: Math.max(count, maxCommits),
+      message: `Reading commit ${count}...`,
+      startTime,
+    })
+  })
+
+  console.log('[git-worker] walkCommitChain result:', logs.length, 'commits')
+
+  if (logs.length === 0) {
+    throw new Error('未找到任何提交记录，请确认仓库不为空')
+  }
 
   onProgress?.({ phase: 'parsing', current: logs.length, total: logs.length, message: `Found ${logs.length} commits`, startTime })
 
@@ -322,7 +559,6 @@ export async function parseGitRepo(
       const currentFiles = await getCachedTree(fs, treeOid, treeCache)
       const parentFiles = parentTreeOid ? await getCachedTree(fs, parentTreeOid, treeCache) : new Map<string, string>()
 
-      // Find added/modified files
       for (const [path, oid] of currentFiles) {
         const parentOid = parentFiles.get(path)
         if (!parentOid) {
@@ -359,12 +595,10 @@ export async function parseGitRepo(
       await new Promise(r => setTimeout(r, 0))
     }
 
-    // 计算预计剩余时间
     const elapsed = Date.now() - startTime
     const avgTimePerCommit = elapsed / (i + 1)
     const remaining = (logs.length - i - 1) * avgTimePerCommit
 
-    // 获取当前分析的文件列表
     const currentFiles = files.map(f => f.path).slice(0, 3).join(', ')
 
     onProgress?.({
@@ -383,7 +617,6 @@ export async function parseGitRepo(
   return commits
 }
 
-// Worker 消息处理
 self.onmessage = async (e: MessageEvent) => {
   const { type, dirHandle, maxCommits } = e.data
 
