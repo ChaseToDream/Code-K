@@ -305,10 +305,10 @@ export async function parseGitRepo(
   for (let i = 0; i < logs.length; i++) {
     const entry = logs[i]
     const commitInfo: CommitInfo = {
-      oid: entry.oid,
-      message: entry.commit.message,
-      author: entry.commit.author.name,
-      timestamp: entry.commit.author.timestamp,
+      oid: entry.oid || '',
+      message: entry.commit?.message || '',
+      author: entry.commit?.author?.name || '',
+      timestamp: entry.commit?.author?.timestamp || 0,
     }
 
     const files: FileChange[] = []
