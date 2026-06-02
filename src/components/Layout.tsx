@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { type ReactNode, useCallback } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useRepo } from '../hooks/useRepo'
+import { useShortcuts } from '../hooks/useShortcuts'
+import ShortcutsHelp from './ShortcutsHelp'
 
 interface LayoutProps {
   children: ReactNode
@@ -8,6 +10,7 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
+  const navigate = useNavigate()
   const isHome = location.pathname === '/'
   const { activeRepo, wsConnected } = useRepo()
 
@@ -17,6 +20,27 @@ export default function Layout({ children }: LayoutProps) {
   const activeStocks = stocks.filter(s => s.status === 'active').length
   const ipoStocks = stocks.filter(s => s.status === 'ipo').length
   const delistedStocks = stocks.filter(s => s.status === 'delisted').length
+
+  // 快捷键处理
+  const handleEscape = useCallback(() => {
+    // 如果在详情页，返回行情页
+    if (location.pathname.startsWith('/stock/')) {
+      navigate('/market')
+    }
+  }, [location.pathname, navigate])
+
+  const handleSearch = useCallback(() => {
+    // 聚焦搜索框
+    const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement
+    if (searchInput) {
+      searchInput.focus()
+    }
+  }, [])
+
+  useShortcuts({
+    onEscape: handleEscape,
+    onSearch: handleSearch,
+  })
 
   return (
     <div className="h-full flex flex-col">
@@ -98,6 +122,9 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Scanline overlay */}
       <div className="scanlines" />
+
+      {/* Shortcuts Help */}
+      <ShortcutsHelp />
     </div>
   )
 }
