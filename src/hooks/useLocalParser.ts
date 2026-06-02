@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react'
 import { useAppContext } from './useAppContext'
 import { buildFileStocks } from '../lib/kline-data'
+import { getCachedRepo, setCachedRepo } from '../lib/cache'
 import type { CommitDiff } from '../lib/types'
 
 export function useLocalParser() {
@@ -23,6 +24,23 @@ export function useLocalParser() {
       },
     })
 
+    // 尝试从缓存加载
+    const cached = await getCachedRepo(repoId)
+    if (cached && cached.stocks.length > 0) {
+      console.log('[Cache] Loading from cache:', repoName)
+      dispatch({
+        type: 'UPDATE_REPO_STOCKS',
+        repoId,
+        stocks: cached.stocks,
+      })
+      dispatch({
+        type: 'SET_REPO_STATUS',
+        repoId,
+        status: 'ready',
+      })
+      return
+    }
+
     // 终止之前的 Worker
     if (workerRef.current) {
       workerRef.current.terminate()
@@ -37,7 +55,7 @@ export function useLocalParser() {
 
     const allCommits: CommitDiff[] = []
 
-    worker.onmessage = (e: MessageEvent) => {
+    worker.onmessage = async (e: MessageEvent) => {
       const { type, progress, commits, error } = e.data
 
       switch (type) {
@@ -72,6 +90,18 @@ export function useLocalParser() {
               repoId,
               stocks: finalStocks,
             })
+
+            // 缓存解析结果
+            await setCachedRepo({
+              id: repoId,
+              name: repoName,
+              path: repoName,
+              stocks: finalStocks,
+              commits: allCommits,
+              timestamp: Date.now(),
+              commitCount: allCommits.length,
+            })
+            console.log('[Cache] Saved to cache:', repoName)
           }
           dispatch({
             type: 'SET_REPO_STATUS',
