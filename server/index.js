@@ -6,10 +6,10 @@ import { WebSocketServer } from 'ws'
 import { runGit } from './git-utils.js'
 import { startWatching, stopWatching, cleanupAllWatchers } from './watcher.js'
 
-// 获取提交列表
+// 获取提交列表（从新到旧）
 async function getCommits(repoPath, limit = 300) {
   const logOutput = await runGit(repoPath, [
-    'log', `--max-count=${limit}`, '--reverse',
+    'log', `--max-count=${limit}`,
     '--format=%H%x00%an%x00%at%x00%s',
   ])
 
@@ -463,6 +463,7 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
     if (abortController.signal.aborted) return
 
     // 2. 逐个获取diff，每10个推送一次部分结果
+    // commits 是从新到旧，parent 是下一个（更旧）
     const allCommits = []
     const BATCH_SIZE = 10
 
@@ -470,7 +471,7 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
       if (abortController.signal.aborted) return
 
       const commit = commits[i]
-      const parent = i < commits.length - 1 ? commits[i + 1] : null
+      const parent = i + 1 < commits.length ? commits[i + 1] : null
       const files = await getDiff(repoPath, commit.hash, parent?.hash)
 
       allCommits.push({
@@ -644,7 +645,7 @@ setupWebSocket(wss)
 // 启动服务器
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
-  console.log(`CODEX API 服务器已启动: http://localhost:${PORT}`)
+  console.log(`Code-K API 服务器已启动: http://localhost:${PORT}`)
   console.log(`WebSocket 服务器已启动: ws://localhost:${PORT}`)
 })
 

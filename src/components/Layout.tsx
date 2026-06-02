@@ -69,7 +69,7 @@ export default function Layout({ children }: LayoutProps) {
         <nav className="bg-ex-surface border-b border-ex-border px-6 py-3 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-6">
             <Link to="/" className="flex items-center gap-3 text-ex-heading no-underline hover:opacity-80 transition-opacity">
-              <span className="font-[Orbitron] text-lg font-bold tracking-wider glow-accent">CODEX</span>
+              <span className="font-[Orbitron] text-lg font-bold tracking-wider glow-accent">Code-K</span>
               <span className="text-xs text-ex-dim font-mono">代码交易所</span>
             </Link>
             <div className="h-5 w-px bg-ex-border" />

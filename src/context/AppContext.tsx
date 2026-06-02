@@ -32,6 +32,7 @@ const initialState: AppState = {
 
 /**
  * 将增量 commits 合并到现有 stocks 中
+ * 增量 commits 按时间正序排列（旧 -> 新），追加到已有 candle 序列末尾
  */
 function applyCommitsToStocks(
   existingStocks: FileStock[],
