@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
 import type { IChartApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { FileStock } from '../lib/types'
@@ -7,9 +7,17 @@ interface KlineChartProps {
   stock: FileStock
 }
 
+const CANDLE_WIDTH = 8
+const CANDLE_GAP = 4
+
 export default function KlineChart({ stock }: KlineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+
+  const contentWidth = useMemo(() => {
+    const dataWidth = stock.candles.length * (CANDLE_WIDTH + CANDLE_GAP) + CANDLE_GAP
+    return Math.max(dataWidth, 300)
+  }, [stock.candles.length])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -48,9 +56,36 @@ export default function KlineChart({ stock }: KlineChartProps) {
         borderColor: '#1e293b',
         timeVisible: true,
         secondsVisible: false,
+        barSpacing: CANDLE_WIDTH + CANDLE_GAP,
+        rightOffset: 4,
+        fixLeftEdge: true,
+        fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: false,
       },
       rightPriceScale: {
         borderColor: '#1e293b',
+        visible: true,
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2,
+        },
+      },
+      leftPriceScale: {
+        visible: false,
+      },
+      handleScroll: {
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+        mouseWheel: true,
+        pressedMouseMove: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: {
+          time: true,
+          price: false,
+        },
+        mouseWheel: true,
+        pinch: true,
       },
     })
 
@@ -112,5 +147,9 @@ export default function KlineChart({ stock }: KlineChartProps) {
     }
   }, [stock])
 
-  return <div ref={chartContainerRef} className="w-full" />
+  return (
+    <div className="w-full">
+      <div ref={chartContainerRef} className="w-full" style={{ minWidth: contentWidth }} />
+    </div>
+  )
 }

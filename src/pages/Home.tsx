@@ -111,7 +111,7 @@ export default function Home() {
 
       <div className="relative z-10 px-8 py-6 flex items-center justify-between border-b border-ex-border/50 shrink-0">
         <div className="flex items-center gap-3">
-          <span className="font-[Orbitron] text-2xl font-black text-ex-heading glow-accent tracking-wider">CODEX</span>
+          <span className="font-[Orbitron] text-2xl font-black text-ex-heading glow-accent tracking-wider">Code-K</span>
           <span className="text-xs text-ex-dim font-mono tracking-[0.2em]">代码交易所</span>
         </div>
         <div className="flex items-center gap-2">

@@ -9,25 +9,24 @@ interface VirtualStockListProps {
 }
 
 const ROW_HEIGHT = 64
-const CONTAINER_MAX_HEIGHT = 600
+const HEADER_HEIGHT = 45
+const MAX_VISIBLE_ROWS = 10
 
 export default function VirtualStockList({ stocks, onStockSelect }: VirtualStockListProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [containerHeight, setContainerHeight] = useState(CONTAINER_MAX_HEIGHT)
+  const [containerHeight, setContainerHeight] = useState(0)
 
   useEffect(() => {
     const updateHeight = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect()
-        const availableHeight = window.innerHeight - rect.top - 100
-        setContainerHeight(Math.min(availableHeight, CONTAINER_MAX_HEIGHT))
-      }
+      const contentHeight = stocks.length * ROW_HEIGHT + HEADER_HEIGHT
+      const maxHeight = MAX_VISIBLE_ROWS * ROW_HEIGHT + HEADER_HEIGHT
+      setContainerHeight(Math.min(contentHeight, maxHeight))
     }
 
     updateHeight()
     window.addEventListener('resize', updateHeight)
     return () => window.removeEventListener('resize', updateHeight)
-  }, [])
+  }, [stocks.length])
 
   if (stocks.length === 0) {
     return (
@@ -49,10 +48,10 @@ export default function VirtualStockList({ stocks, onStockSelect }: VirtualStock
         <span className="text-right">走势</span>
       </div>
 
-      {/* Stock List with virtual scrolling container */}
+      {/* Stock List with auto height */}
       <div
         className="overflow-y-auto"
-        style={{ height: containerHeight }}
+        style={{ height: containerHeight > 0 ? containerHeight : 'auto' }}
       >
         {stocks.map((stock) => {
           const candleUp = stock.changePercent >= 0
