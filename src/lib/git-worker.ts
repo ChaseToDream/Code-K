@@ -160,17 +160,14 @@ function fastDiff(oldText: string, newText: string): { additions: number; deleti
   const m = oldLines.length
   const n = newLines.length
 
-  // Quick check for identical files
   if (m === n && oldLines.every((line, i) => line === newLines[i])) {
     return { additions: 0, deletions: 0 }
   }
 
-  // For small files, use precise LCS
   if (m * n <= 40_000) {
     return lcsDiff(oldLines, newLines, m, n)
   }
 
-  // Build a hash map of old lines for quick lookup
   const oldLineIndices = new Map<string, number[]>()
   for (let i = 0; i < m; i++) {
     const indices = oldLineIndices.get(oldLines[i])
@@ -222,6 +219,12 @@ function lcsDiff(oldLines: string[], newLines: string[], m: number, n: number): 
 }
 
 // Tree cache helper
+interface TreeEntry {
+  path: string
+  type: string
+  oid: string
+}
+
 async function getCachedTree(
   fs: WebFsAdapter,
   treeOid: string,
@@ -232,12 +235,6 @@ async function getCachedTree(
 
   const files = new Map<string, string>()
   const entries = await git.readTree({ fs, dir: '.', oid: treeOid })
-
-  interface TreeEntry {
-    path: string
-    type: string
-    oid: string
-  }
 
   async function walk(items: TreeEntry[], prefix: string) {
     for (const item of items) {
@@ -255,7 +252,7 @@ async function getCachedTree(
     }
   }
 
-  await walk(entries.tree, '')
+  await walk(entries.tree as TreeEntry[], '')
   cache.set(treeOid, files)
   return files
 }
@@ -283,25 +280,23 @@ export async function parseGitRepo(
   onPartialCommit?: CommitsCallback
 ): Promise<CommitDiff[]> {
   const fs = new WebFsAdapter(dirHandle)
+  const startTime = Date.now()
 
-  onProgress?.({ phase: 'reading', current: 0, total: 1, message: 'Reading .git directory...' })
+  onProgress?.({ phase: 'reading', current: 0, total: 1, message: 'Reading .git directory...', startTime })
 
-  // Verify .git exists
   try {
     await fs.promises.stat('.git')
   } catch {
     throw new Error('Not a git repository: .git directory not found')
   }
 
-  // Get commit log
-  onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Parsing commit history...' })
+  onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Parsing commit history...', startTime })
 
   const logs = await git.log({ fs, dir: '.', depth: maxCommits })
 
-  onProgress?.({ phase: 'parsing', current: logs.length, total: logs.length, message: `Found ${logs.length} commits` })
+  onProgress?.({ phase: 'parsing', current: logs.length, total: logs.length, message: `Found ${logs.length} commits`, startTime })
 
-  // Build diffs for each commit pair
-  onProgress?.({ phase: 'diffing', current: 0, total: logs.length, message: 'Analyzing diffs...' })
+  onProgress?.({ phase: 'diffing', current: 0, total: logs.length, message: 'Analyzing diffs...', startTime })
 
   const commits: CommitDiff[] = []
   const blobCache = new Map<string, string>()
@@ -357,22 +352,56 @@ export async function parseGitRepo(
     commits.push(commitDiff)
     if (resultCommits) resultCommits.push(commitDiff)
 
-    // Yield to main thread and report partial results every 10 commits
     if (onPartialCommit && i > 0 && i % 10 === 0) {
       onPartialCommit([...commits])
       await new Promise(r => setTimeout(r, 0))
     }
+
+    // 计算预计剩余时间
+    const elapsed = Date.now() - startTime
+    const avgTimePerCommit = elapsed / (i + 1)
+    const remaining = (logs.length - i - 1) * avgTimePerCommit
+
+    // 获取当前分析的文件列表
+    const currentFiles = files.map(f => f.path).slice(0, 3).join(', ')
 
     onProgress?.({
       phase: 'diffing',
       current: i + 1,
       total: logs.length,
       message: `Analyzing commit ${i + 1}/${logs.length}`,
+      currentFile: currentFiles || undefined,
+      estimatedTimeRemaining: remaining,
+      startTime,
     })
   }
 
-  // Final partial commit call
   if (onPartialCommit) onPartialCommit([...commits])
 
   return commits
+}
+
+// Worker 消息处理
+self.onmessage = async (e: MessageEvent) => {
+  const { type, dirHandle, maxCommits } = e.data
+
+  if (type === 'parse') {
+    try {
+      const commits = await parseGitRepo(
+        dirHandle,
+        (progress) => {
+          self.postMessage({ type: 'progress', progress })
+        },
+        maxCommits || 300,
+        undefined,
+        (partialCommits) => {
+          self.postMessage({ type: 'partial', commits: partialCommits })
+        }
+      )
+
+      self.postMessage({ type: 'complete', commits })
+    } catch (error) {
+      self.postMessage({ type: 'error', error: (error as Error).message })
+    }
+  }
 }

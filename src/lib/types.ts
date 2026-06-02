@@ -9,6 +9,8 @@ export interface FileChange {
   path: string;
   additions: number;
   deletions: number;
+  oldContent?: string;
+  newContent?: string;
 }
 
 export interface CommitDiff {
@@ -26,6 +28,8 @@ export interface CandleData {
   commitMessage: string;
   commitHash: string;
   author: string;
+  oldContent?: string;
+  newContent?: string;
 }
 
 export interface FileStock {
@@ -47,6 +51,9 @@ export interface ParseProgress {
   current: number;
   total: number;
   message: string;
+  currentFile?: string;
+  estimatedTimeRemaining?: number; // 毫秒
+  startTime?: number;
 }
 
 // 仓库信息

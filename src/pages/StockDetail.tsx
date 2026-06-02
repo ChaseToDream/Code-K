@@ -1,7 +1,6 @@
 import { useMemo, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useRepo } from '../hooks/useRepo'
-import { useWebSocket } from '../hooks/useWebSocket'
 import KlineChart from '../components/KlineChart'
 import DiffViewer from '../components/DiffViewer'
 
@@ -9,7 +8,6 @@ export default function StockDetail() {
   const { path } = useParams<{ path: string }>()
   const decodedPath = decodeURIComponent(path || '')
   const { activeRepo } = useRepo()
-  const { sendRequestDiff } = useWebSocket()
 
   const stock = useMemo(
     () => activeRepo?.stocks.find(s => s.path === decodedPath),
@@ -17,43 +15,13 @@ export default function StockDetail() {
   )
 
   const [selectedCandle, setSelectedCandle] = useState<number | null>(null)
-  const [diffData, setDiffData] = useState<{
-    oldContent: string;
-    newContent: string;
-    additions: number;
-    deletions: number;
-  } | null>(null)
-  const [loadingDiff, setLoadingDiff] = useState(false)
 
-  const handleViewDiff = useCallback(async (candleIdx: number) => {
-    if (!stock || !activeRepo) return
-
-    const candle = stock.candles[candleIdx]
-    if (!candle) return
-
+  const handleViewDiff = useCallback((candleIdx: number) => {
     setSelectedCandle(candleIdx)
-    setLoadingDiff(true)
-
-    // 请求diff详情
-    sendRequestDiff(activeRepo.path, candle.commitHash, stock.path)
-
-    // 注意：实际的diff数据会通过WebSocket返回
-    // 这里我们模拟一个简单的diff数据
-    // 在实际应用中，需要监听WebSocket消息来获取真实的diff数据
-    setTimeout(() => {
-      setDiffData({
-        oldContent: `// Previous version of ${stock.path}\n// Lines: ${candle.open}`,
-        newContent: `// Current version of ${stock.path}\n// Lines: ${candle.close}\n// Added: ${candle.volume} changes`,
-        additions: Math.max(0, candle.close - candle.open),
-        deletions: Math.max(0, candle.open - candle.close),
-      })
-      setLoadingDiff(false)
-    }, 500)
-  }, [stock, activeRepo, sendRequestDiff])
+  }, [])
 
   const handleCloseDiff = useCallback(() => {
     setSelectedCandle(null)
-    setDiffData(null)
   }, [])
 
   if (!stock) {
@@ -77,6 +45,8 @@ export default function StockDetail() {
   const lastDate = stock.lastCommit
     ? new Date(stock.lastCommit.timestamp * 1000).toLocaleDateString()
     : '-'
+
+  const selectedCandleData = selectedCandle !== null ? stock.candles[selectedCandle] : null
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -152,11 +122,11 @@ export default function StockDetail() {
       </div>
 
       {/* Diff Viewer */}
-      {selectedCandle !== null && (
+      {selectedCandleData && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-mono text-ex-heading">
-              提交差异详情 - {stock.candles[selectedCandle]?.commitHash}
+              提交差异详情 - {selectedCandleData.commitHash}
             </h3>
             <button
               onClick={handleCloseDiff}
@@ -165,21 +135,20 @@ export default function StockDetail() {
               关闭
             </button>
           </div>
-          {loadingDiff ? (
-            <div className="bg-ex-surface border border-ex-border rounded-lg p-8 text-center">
-              <div className="w-2 h-2 rounded-full bg-ex-accent pulse-glow mx-auto mb-2" />
-              <p className="text-ex-dim text-sm font-mono">加载差异数据中...</p>
-            </div>
-          ) : diffData ? (
+          {selectedCandleData.oldContent !== undefined && selectedCandleData.newContent !== undefined ? (
             <DiffViewer
-              oldContent={diffData.oldContent}
-              newContent={diffData.newContent}
+              oldContent={selectedCandleData.oldContent}
+              newContent={selectedCandleData.newContent}
               filePath={stock.path}
-              additions={diffData.additions}
-              deletions={diffData.deletions}
+              additions={Math.max(0, selectedCandleData.close - selectedCandleData.open)}
+              deletions={Math.max(0, selectedCandleData.open - selectedCandleData.close)}
               onClose={handleCloseDiff}
             />
-          ) : null}
+          ) : (
+            <div className="bg-ex-surface border border-ex-border rounded-lg p-8 text-center">
+              <p className="text-ex-dim text-sm font-mono">此提交没有文件内容数据</p>
+            </div>
+          )}
         </div>
       )}
 

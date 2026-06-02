@@ -51,6 +51,8 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
           commitMessage: commit.message,
           commitHash: commit.oid.slice(0, 8),
           author: commit.author,
+          oldContent: file.oldContent,
+          newContent: file.newContent,
         });
         state.currentLines = close;
         state.totalAdditions += file.additions;
@@ -71,6 +73,8 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
           commitMessage: commit.message,
           commitHash: commit.oid.slice(0, 8),
           author: commit.author,
+          oldContent: file.oldContent,
+          newContent: file.newContent,
         });
 
         state.currentLines = close;

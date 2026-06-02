@@ -7,6 +7,18 @@ import RepoTabs from '../components/RepoTabs'
 type SortKey = 'lines' | 'change' | 'volume' | 'commits'
 type FilterStatus = 'all' | 'active' | 'ipo' | 'delisted'
 
+function formatTimeRemaining(ms: number): string {
+  if (ms < 1000) return '< 1秒'
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `${seconds}秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) return `${minutes}分${remainingSeconds}秒`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return `${hours}时${remainingMinutes}分`
+}
+
 export default function Market() {
   const { activeRepo, repos, setActiveRepo, removeRepo, selectStock } = useRepo()
   const [search, setSearch] = useState('')
@@ -64,13 +76,21 @@ export default function Market() {
 
       {/* 解析进度 */}
       {isParsing && parseProgress && (
-        <div className="space-y-1">
+        <div className="space-y-2">
           <div className="flex justify-between text-xs font-mono">
             <span className="text-ex-text">{parseProgress.message}</span>
             <span className="text-ex-accent">{progressPercent}%</span>
           </div>
           <div className="h-2 bg-ex-surface rounded-full overflow-hidden border border-ex-border">
             <div className="h-full bg-ex-accent rounded-full transition-all duration-300 progress-stripe" style={{ width: `${progressPercent}%` }} />
+          </div>
+          <div className="flex justify-between text-xs font-mono text-ex-dim">
+            {parseProgress.currentFile && (
+              <span className="truncate max-w-md">当前: {parseProgress.currentFile}</span>
+            )}
+            {parseProgress.estimatedTimeRemaining !== undefined && parseProgress.estimatedTimeRemaining > 0 && (
+              <span>预计剩余: {formatTimeRemaining(parseProgress.estimatedTimeRemaining)}</span>
+            )}
           </div>
         </div>
       )}
