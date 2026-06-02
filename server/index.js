@@ -271,46 +271,47 @@ async function handleResolve(req, res) {
     return res.end(JSON.stringify({ error: '缺少文件夹名' }))
   }
 
+  // 只扫描常见的代码目录，深度限制为2层
   const searchRoots = [
-    homedir(),
-    process.env.USERPROFILE || '',
-    join(process.env.USERPROFILE || '', 'Desktop'),
-    join(process.env.USERPROFILE || '', 'Documents'),
-    join(process.env.USERPROFILE || '', 'Downloads'),
-    join(process.env.USERPROFILE || '', 'Source'),
-    join(process.env.USERPROFILE || '', 'source'),
-    join(process.env.USERPROFILE || '', 'code'),
-    join(process.env.USERPROFILE || '', 'Code'),
-    join(process.env.USERPROFILE || '', 'projects'),
-    join(process.env.USERPROFILE || '', 'Projects'),
-    join(process.env.USERPROFILE || '', 'workspace'),
-    join(process.env.USERPROFILE || '', 'Workspace'),
-    join(process.env.USERPROFILE || '', 'dev'),
-    join(process.env.USERPROFILE || '', 'Dev'),
-    join(process.env.USERPROFILE || '', 'git'),
-    join(process.env.USERPROFILE || '', 'Git'),
-    process.env.HOME || '',
-    'D:', 'E:', 'F:', 'G:',
-    'D:\\codeFile', 'D:\\projects', 'D:\\workspace', 'D:\\dev',
-    'D:\\code', 'D:\\source',
+    join(process.env.USERPROFILE || homedir(), 'code'),
+    join(process.env.USERPROFILE || homedir(), 'Code'),
+    join(process.env.USERPROFILE || homedir(), 'projects'),
+    join(process.env.USERPROFILE || homedir(), 'Projects'),
+    join(process.env.USERPROFILE || homedir(), 'workspace'),
+    join(process.env.USERPROFILE || homedir(), 'Workspace'),
+    join(process.env.USERPROFILE || homedir(), 'dev'),
+    join(process.env.USERPROFILE || homedir(), 'Dev'),
+    join(process.env.USERPROFILE || homedir(), 'source'),
+    join(process.env.USERPROFILE || homedir(), 'Source'),
+    join(process.env.USERPROFILE || homedir(), 'Desktop'),
+    join(process.env.USERPROFILE || homedir(), 'Documents'),
+    'D:\\codeFile',
+    'D:\\projects',
   ].filter(Boolean)
 
   const uniqueRoots = [...new Set(searchRoots)]
   const results = []
 
-  function scanDir(dir, depth = 0, maxDepth = 5) {
-    if (depth > maxDepth || results.length >= 30) return
+  // 限制扫描深度和时间
+  const startTime = Date.now()
+  const MAX_SCAN_TIME = 5000 // 5秒超时
+
+  function scanDir(dir, depth = 0, maxDepth = 2) {
+    // 超时检查
+    if (Date.now() - startTime > MAX_SCAN_TIME) return
+    if (depth > maxDepth || results.length >= 10) return
+    
     try {
       const dirName = dir.split(/[\\/]/).pop() || ''
       if (dirName.toLowerCase() === name.toLowerCase() && existsSync(join(dir, '.git'))) {
         results.push({ path: dir, name: dirName })
         return
       }
-      if (results.length >= 30) return
+      if (results.length >= 10) return
 
       const entries = readdirSync(dir, { withFileTypes: true })
       for (const entry of entries) {
-        if (results.length >= 30) break
+        if (results.length >= 10 || Date.now() - startTime > MAX_SCAN_TIME) break
         if (entry.isDirectory() && !entry.name.startsWith('.') && !entry.name.startsWith('node_modules') && !entry.name.startsWith('.git')) {
           try {
             scanDir(join(dir, entry.name), depth + 1, maxDepth)
@@ -321,6 +322,7 @@ async function handleResolve(req, res) {
   }
 
   for (const root of uniqueRoots) {
+    if (results.length >= 10 || Date.now() - startTime > MAX_SCAN_TIME) break
     if (existsSync(root)) scanDir(root)
   }
 
