@@ -507,7 +507,7 @@ export async function parseGitRepo(
   try {
     headOid = await resolveHeadOid(fs)
   } catch (headErr) {
-    throw new Error(`无法解析 Git HEAD: ${(headErr as Error).message}`)
+    throw new Error(`无法解析 Git HEAD: ${(headErr as Error).message}`, { cause: headErr })
   }
 
   onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Walking commit chain...' })

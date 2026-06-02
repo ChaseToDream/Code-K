@@ -510,7 +510,7 @@ export async function parseGitRepo(
     console.log('[git-worker] resolveHeadOid success:', headOid)
   } catch (headErr) {
     console.warn('[git-worker] resolveHeadOid failed:', (headErr as Error).message)
-    throw new Error(`无法解析 Git HEAD: ${(headErr as Error).message}`)
+    throw new Error(`无法解析 Git HEAD: ${(headErr as Error).message}`, { cause: headErr })
   }
 
   onProgress?.({ phase: 'parsing', current: 0, total: maxCommits, message: 'Walking commit chain...', startTime })

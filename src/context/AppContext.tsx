@@ -1,6 +1,6 @@
 import { createContext, useReducer } from 'react';
 import type { ReactNode } from 'react';
-import type { RepoInfo, FileStock, ParseProgress } from '../lib/types';
+import type { RepoInfo, FileStock, ParseProgress, CommitDiff } from '../lib/types';
 
 // 应用状态
 interface AppState {
@@ -17,6 +17,7 @@ type AppAction =
   | { type: 'SET_ACTIVE_REPO'; repoId: string }
   | { type: 'UPDATE_REPO_PROGRESS'; repoId: string; progress: ParseProgress }
   | { type: 'UPDATE_REPO_STOCKS'; repoId: string; stocks: FileStock[] }
+  | { type: 'APPEND_REPO_COMMITS'; repoId: string; commits: CommitDiff[] }
   | { type: 'SET_REPO_STATUS'; repoId: string; status: RepoInfo['status']; error?: string }
   | { type: 'SELECT_STOCK'; stock: FileStock | null }
   | { type: 'SET_WS_CONNECTED'; connected: boolean };
@@ -28,6 +29,99 @@ const initialState: AppState = {
   selectedStock: null,
   wsConnected: false,
 };
+
+/**
+ * 将增量 commits 合并到现有 stocks 中
+ */
+function applyCommitsToStocks(
+  existingStocks: FileStock[],
+  newCommits: CommitDiff[],
+  repoId: string
+): FileStock[] {
+  const stockMap = new Map(existingStocks.map(s => [s.path, s]));
+
+  for (const diff of newCommits) {
+    const { commit, files } = diff;
+
+    for (const file of files) {
+      let stock = stockMap.get(file.path);
+
+      if (!stock) {
+        // 新文件首次出现
+        const open = 0;
+        const close = Math.max(0, file.additions - file.deletions);
+        stock = {
+          path: file.path,
+          ticker: generateTicker(file.path),
+          candles: [{
+            time: commit.timestamp,
+            open,
+            high: Math.max(open, close),
+            low: Math.min(open, close),
+            close,
+            volume: file.additions + file.deletions,
+            commitMessage: commit.message,
+            commitHash: commit.oid.slice(0, 8),
+            author: commit.author,
+          }],
+          currentLines: close,
+          status: 'ipo',
+          firstCommit: commit,
+          lastCommit: commit,
+          totalAdditions: file.additions,
+          totalDeletions: file.deletions,
+          changePercent: close > 0 ? 100 : 0,
+          repoId,
+        };
+        stockMap.set(file.path, stock);
+      } else {
+        // 已有文件追加 candle
+        const open = stock.currentLines;
+        const change = file.additions - file.deletions;
+        const close = Math.max(0, open + change);
+
+        stock.candles.push({
+          time: commit.timestamp,
+          open,
+          high: Math.max(open, close),
+          low: Math.min(open, close),
+          close,
+          volume: file.additions + file.deletions,
+          commitMessage: commit.message,
+          commitHash: commit.oid.slice(0, 8),
+          author: commit.author,
+        });
+
+        stock.currentLines = close;
+        stock.totalAdditions += file.additions;
+        stock.totalDeletions += file.deletions;
+        stock.lastCommit = commit;
+        stock.status = close === 0 && file.deletions > 0 ? 'delisted' : 'active';
+
+        const lastCandle = stock.candles[stock.candles.length - 1];
+        stock.changePercent = lastCandle.open > 0
+          ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100
+          : (lastCandle.close > 0 ? 100 : 0);
+      }
+    }
+  }
+
+  const result = Array.from(stockMap.values());
+  result.sort((a, b) => b.currentLines - a.currentLines);
+  return result;
+}
+
+/**
+ * 根据文件路径生成股票代码
+ */
+function generateTicker(path: string): string {
+  const parts = path.split('/');
+  const filename = parts[parts.length - 1];
+  const name = filename.replace(/\.[^.]+$/, '').toUpperCase();
+  const ext = filename.includes('.') ? filename.split('.').pop()!.toUpperCase() : '';
+  const shortName = name.slice(0, 6);
+  return ext ? `${shortName}.${ext.slice(0, 3)}` : shortName;
+}
 
 // Reducer
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -63,6 +157,23 @@ function appReducer(state: AppState, action: AppAction): AppState {
         newRepos.set(action.repoId, { ...repo, stocks: action.stocks });
       }
       return { ...state, repos: newRepos };
+    }
+    case 'APPEND_REPO_COMMITS': {
+      const newRepos = new Map(state.repos);
+      const repo = newRepos.get(action.repoId);
+      if (!repo) return state;
+
+      const updatedStocks = applyCommitsToStocks(repo.stocks, action.commits, action.repoId);
+      newRepos.set(action.repoId, { ...repo, stocks: updatedStocks });
+
+      // 如果当前选中的股票属于该仓库，同步更新
+      let newSelectedStock = state.selectedStock;
+      if (state.selectedStock?.repoId === action.repoId) {
+        const updated = updatedStocks.find(s => s.path === state.selectedStock!.path);
+        if (updated) newSelectedStock = updated;
+      }
+
+      return { ...state, repos: newRepos, selectedStock: newSelectedStock };
     }
     case 'SET_REPO_STATUS': {
       const newRepos = new Map(state.repos);

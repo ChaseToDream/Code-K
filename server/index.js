@@ -1,28 +1,10 @@
-import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { WebSocketServer } from 'ws'
-
-// Git 操作封装
-function runGit(repoPath, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd: repoPath,
-      env: { ...process.env, LANG: 'en_US.UTF-8' },
-    })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => (stdout += d.toString('utf8')))
-    child.stderr.on('data', (d) => (stderr += d.toString('utf8')))
-    child.on('close', (code) => {
-      if (code !== 0 && code !== 1) return reject(new Error(`git ${args.join(' ')} failed: ${stderr}`))
-      resolve(stdout)
-    })
-    child.on('error', reject)
-  })
-}
+import { runGit } from './git-utils.js'
+import { startWatching, stopWatching, cleanupAllWatchers } from './watcher.js'
 
 // 获取提交列表
 async function getCommits(repoPath, limit = 300) {
@@ -397,11 +379,13 @@ function setupWebSocket(wss) {
     ws.on('close', () => {
       console.log('[WebSocket] Client disconnected')
       cleanupParses(ws)
+      stopWatching(ws)
     })
 
     ws.on('error', (error) => {
       console.error('[WebSocket] Connection error:', error)
       cleanupParses(ws)
+      stopWatching(ws)
     })
   })
 }
@@ -549,6 +533,9 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
 
     console.log(`[WebSocket] Parse complete for ${repoName}: ${commits.length} commits, ${finalStocks.length} stocks, ${Date.now() - startTime}ms`)
 
+    // 4. 解析完成后启动实时监视
+    await startWatching(repoId, repoPath, repoName, ws)
+
   } catch (error) {
     console.error('[WebSocket] Parse error:', error)
     ws.send(JSON.stringify({
@@ -659,4 +646,16 @@ const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
   console.log(`CODEX API 服务器已启动: http://localhost:${PORT}`)
   console.log(`WebSocket 服务器已启动: ws://localhost:${PORT}`)
+})
+
+// 进程退出时清理监视器
+process.on('SIGINT', () => {
+  console.log('\n[Server] Shutting down...')
+  cleanupAllWatchers()
+  process.exit(0)
+})
+
+process.on('SIGTERM', () => {
+  cleanupAllWatchers()
+  process.exit(0)
 })

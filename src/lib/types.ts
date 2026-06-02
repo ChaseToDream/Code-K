@@ -137,7 +137,15 @@ export interface ParseStoppedMessage {
   type: 'parse_stopped';
 }
 
-export type ServerMessage = ProgressMessage | PartialResultMessage | CompleteMessage | ErrorMessage | DiffDetailMessage | ParseStartedMessage | ParseStoppedMessage;
+export interface CommitsUpdateMessage {
+  type: 'commits_update';
+  repoId: string;
+  repoName: string;
+  commits: CommitDiff[];
+  newHead: string;
+}
+
+export type ServerMessage = ProgressMessage | PartialResultMessage | CompleteMessage | ErrorMessage | DiffDetailMessage | ParseStartedMessage | ParseStoppedMessage | CommitsUpdateMessage;
 
 export interface StartParseMessage {
   type: 'start_parse';

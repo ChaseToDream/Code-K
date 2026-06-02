@@ -97,6 +97,15 @@ export function useWebSocket() {
             // 这个消息需要由具体的组件处理，暂时只打印日志
             console.log('[WebSocket] Diff detail received for', message.filePath);
             break;
+
+          case 'commits_update':
+            dispatch({
+              type: 'APPEND_REPO_COMMITS',
+              repoId: message.repoId,
+              commits: message.commits,
+            });
+            console.log(`[WebSocket] Applied ${message.commits.length} new commits to ${message.repoName}`);
+            break;
         }
       } catch (error) {
         console.error('[WebSocket] Failed to parse message:', error);
