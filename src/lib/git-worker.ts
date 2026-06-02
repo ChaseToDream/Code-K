@@ -314,8 +314,10 @@ export async function parseGitRepo(
     const files: FileChange[] = []
 
     try {
-      const treeOid = entry.commit.tree
-      const parentTreeOid = i < logs.length - 1 ? logs[i + 1].commit.tree : undefined
+      const treeOid = entry.commit?.tree
+      if (!treeOid) continue
+
+      const parentTreeOid = i < logs.length - 1 ? logs[i + 1]?.commit?.tree : undefined
 
       const currentFiles = await getCachedTree(fs, treeOid, treeCache)
       const parentFiles = parentTreeOid ? await getCachedTree(fs, parentTreeOid, treeCache) : new Map<string, string>()
