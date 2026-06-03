@@ -513,7 +513,7 @@ export async function parseGitRepo(options: ParseGitRepoOptions): Promise<Commit
   const fs = new WebFsAdapter(dirHandle)
   const startTime = includeStartTime ? Date.now() : undefined
 
-  const createProgress = (phase: string, current: number, total: number, message: string, extra?: Partial<ParseProgress>): ParseProgress => ({
+  const createProgress = (phase: ParseProgress['phase'], current: number, total: number, message: string, extra?: Partial<ParseProgress>): ParseProgress => ({
     phase,
     current,
     total,

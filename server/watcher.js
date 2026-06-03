@@ -20,6 +20,7 @@ async function getHeadCommit(repoPath) {
 
 /**
  * 获取指定 commit 的详细信息及文件差异
+ * 使用 --numstat --reverse 一次性获取变更统计，避免 diff-tree 的 parent 假设错误
  */
 async function getCommitWithDiff(repoPath, hash) {
   const parentHash = `${hash}~1`
@@ -31,34 +32,51 @@ async function getCommitWithDiff(repoPath, hash) {
   }
 
   const logOutput = await runGit(repoPath, [
-    'log', '-1', '--format=%H%x00%an%x00%at%x00%s', hash
+    'log', '-1',
+    '--numstat', '--reverse',
+    '--format=%H%x00%an%x00%at%x00%s',
+    hash
   ])
-  const [commitHash, author, timestamp, message] = logOutput.trim().split('\0')
 
-  const files = await getDiff(repoPath, hash, parentExists ? parentHash : null)
+  let currentCommit = null
+  let files = []
+
+  for (const line of logOutput.split('\n')) {
+    if (!line.trim()) continue
+    if (line.includes('\0')) {
+      const [commitHash, author, timestamp, message] = line.split('\0')
+      currentCommit = {
+        oid: commitHash,
+        message,
+        author,
+        timestamp: parseInt(timestamp)
+      }
+    } else {
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
+      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
+      const path = parts[2]
+      if (parts[0] === '-' && parts[1] === '-') continue
+      files.push({ path, additions, deletions })
+    }
+  }
+
+  // 兜底：如果上面没有获取到 files，尝试用 diff-tree
+  if (files.length === 0) {
+    let numstat
+    if (!parentExists) {
+      numstat = await runGit(repoPath, ['diff-tree', '--numstat', '--root', '-r', hash])
+    } else {
+      numstat = await runGit(repoPath, ['diff-tree', '--numstat', '-r', parentHash, hash])
+    }
+    files = parseNumstat(numstat)
+  }
 
   return {
-    commit: {
-      oid: commitHash,
-      message,
-      author,
-      timestamp: parseInt(timestamp)
-    },
+    commit: currentCommit,
     files
   }
-}
-
-/**
- * 获取文件差异
- */
-async function getDiff(repoPath, hash, parentHash) {
-  let numstat
-  if (!parentHash) {
-    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '--root', '-r', hash])
-  } else {
-    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '-r', parentHash, hash])
-  }
-  return parseNumstat(numstat)
 }
 
 /**
@@ -80,11 +98,13 @@ function parseNumstat(output) {
 
 /**
  * 获取两个 commit 之间的新增 commits
+ * 使用 --first-parent 保持与初始解析一致，避免 merge commit 引入额外 commits
  */
 async function getNewCommits(repoPath, lastKnownHead) {
   try {
     const logOutput = await runGit(repoPath, [
       'log', `${lastKnownHead}..HEAD`, '--reverse',
+      '--first-parent',
       '--format=%H%x00%an%x00%at%x00%s'
     ])
 
@@ -175,7 +195,7 @@ async function checkForUpdates(repoId) {
 
     console.log(`[Watcher] New commits detected in ${repoName}: ${lastHead.slice(0, 8)} -> ${currentHead.slice(0, 8)}`)
 
-    // 获取新增的 commits
+    // 获取新增的 commits（使用 --first-parent 保持与初始解析一致）
     const newCommits = await getNewCommits(repoPath, lastHead)
     if (newCommits.length === 0) {
       // 可能是 reset 或其他操作，直接更新 HEAD
@@ -183,27 +203,13 @@ async function checkForUpdates(repoId) {
       return
     }
 
-    // 获取每个新 commit 的 diff
+    // 获取每个新 commit 的 diff（复用 getCommitWithDiff，内部已处理 --numstat）
     const commitDiffs = []
     for (const commit of newCommits) {
-      const parentHash = `${commit.hash}~1`
-      let parentExists = true
-      try {
-        await runGit(repoPath, ['cat-file', '-t', parentHash])
-      } catch {
-        parentExists = false
+      const diff = await getCommitWithDiff(repoPath, commit.hash)
+      if (diff.commit) {
+        commitDiffs.push(diff)
       }
-
-      const files = await getDiff(repoPath, commit.hash, parentExists ? parentHash : null)
-      commitDiffs.push({
-        commit: {
-          oid: commit.hash,
-          message: commit.message,
-          author: commit.author,
-          timestamp: commit.timestamp
-        },
-        files
-      })
     }
 
     // 更新 lastHead

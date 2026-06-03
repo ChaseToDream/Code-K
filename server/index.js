@@ -6,45 +6,71 @@ import { WebSocketServer } from 'ws'
 import { runGit } from './git-utils.js'
 import { startWatching, stopWatching, cleanupAllWatchers } from './watcher.js'
 
-// 获取提交列表（从新到旧）
-async function getCommits(repoPath, limit = 300) {
+/**
+ * 用单次 git log 获取 commit 列表及每个 commit 的文件变更统计
+ * --first-parent: 只沿第一父提交走，形成严格单链，避免 merge commit 打乱 parent 关系
+ * --numstat: 直接输出每个 commit 的增删行数
+ * --reverse: 按时间正序输出（旧 -> 新），与后续 buildFileStocks 的 chronological 一致
+ *
+ * 输出格式：每个 commit 由 format 行开头，后跟若干 numstat 行，commit 之间用空行分隔
+ *   hash\0author\0timestamp\0message
+ *   additions\tdeletions\tpath
+ *   additions\tdeletions\tpath
+ *
+ *   hash\0author\0timestamp\0message
+ *   ...
+ */
+async function getCommitsWithDiff(repoPath, limit = 300) {
   const logOutput = await runGit(repoPath, [
     'log', `--max-count=${limit}`,
+    '--first-parent',
+    '--numstat',
+    '--reverse',
     '--format=%H%x00%an%x00%at%x00%s',
   ])
 
   const commits = []
-  for (const line of logOutput.split('\n').filter(Boolean)) {
-    const [hash, author, timestamp, message] = line.split('\0')
-    commits.push({ hash, author, timestamp: parseInt(timestamp), message })
+  let currentCommit = null
+  let currentFiles = []
+
+  for (const line of logOutput.split('\n')) {
+    if (!line.trim()) {
+      // 空行表示 commit 结束
+      if (currentCommit) {
+        commits.push({ commit: currentCommit, files: currentFiles })
+        currentCommit = null
+        currentFiles = []
+      }
+      continue
+    }
+
+    if (line.includes('\0')) {
+      // format 行: hash\0author\0timestamp\0message
+      const [hash, author, timestamp, message] = line.split('\0')
+      currentCommit = {
+        oid: hash,
+        author,
+        timestamp: parseInt(timestamp),
+        message,
+      }
+    } else {
+      // numstat 行: additions\tdeletions\tpath
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
+      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
+      const path = parts[2]
+      if (parts[0] === '-' && parts[1] === '-') continue
+      currentFiles.push({ path, additions, deletions })
+    }
   }
+
+  // 处理最后一个 commit（如果文件末尾没有空行）
+  if (currentCommit) {
+    commits.push({ commit: currentCommit, files: currentFiles })
+  }
+
   return commits
-}
-
-// 获取文件差异
-async function getDiff(repoPath, hash, parentHash) {
-  let numstat
-  if (!parentHash) {
-    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '--root', '-r', hash])
-  } else {
-    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '-r', parentHash, hash])
-  }
-  return parseNumstat(numstat)
-}
-
-// 解析 numstat 输出
-function parseNumstat(output) {
-  const files = []
-  for (const line of output.split('\n').filter(Boolean)) {
-    const parts = line.split('\t')
-    if (parts.length < 3) continue
-    const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
-    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
-    const path = parts[2]
-    if (parts[0] === '-' && parts[1] === '-') continue
-    files.push({ path, additions, deletions })
-  }
-  return files
 }
 
 // 生成仓库ID
@@ -313,8 +339,14 @@ async function handleResolve(req, res) {
 
 async function handleGetLog(req, res, repoPath) {
   const limit = new URL(req.url, `http://${req.headers.host}`).searchParams.get('limit') || '300'
-  const commits = await getCommits(repoPath, parseInt(limit))
-  res.json(commits)
+  const commits = await getCommitsWithDiff(repoPath, parseInt(limit))
+  // 返回简化格式，保持与前端兼容
+  res.json(commits.map(c => ({
+    hash: c.commit.oid,
+    author: c.commit.author,
+    timestamp: c.commit.timestamp,
+    message: c.commit.message,
+  })))
 }
 
 async function handleGetDiff(req, res, repoPath) {
@@ -322,7 +354,24 @@ async function handleGetDiff(req, res, repoPath) {
   const hash = url.searchParams.get('hash')
   const parentHash = url.searchParams.get('parentHash')
 
-  const files = await getDiff(repoPath, hash, parentHash)
+  let numstat
+  if (!parentHash) {
+    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '--root', '-r', hash])
+  } else {
+    numstat = await runGit(repoPath, ['diff-tree', '--numstat', '-r', parentHash, hash])
+  }
+
+  const files = []
+  for (const line of numstat.split('\n').filter(Boolean)) {
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
+    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
+    const path = parts[2]
+    if (parts[0] === '-' && parts[1] === '-') continue
+    files.push({ path, additions, deletions })
+  }
+
   res.json(files)
 }
 
@@ -448,7 +497,7 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
   const startTime = Date.now()
 
   try {
-    // 1. 获取提交列表
+    // 1. 一次性获取所有 commit 及 diff 统计
     ws.send(JSON.stringify({
       type: 'progress',
       repoId,
@@ -458,70 +507,51 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
       message: '正在获取提交记录...'
     }))
 
-    const commits = await getCommits(repoPath, maxCommits)
+    const commits = await getCommitsWithDiff(repoPath, maxCommits)
 
     if (abortController.signal.aborted) return
 
-    // 2. 逐个获取diff，每10个推送一次部分结果
-    // commits 是从新到旧，parent 是下一个（更旧）
-    const allCommits = []
-    const BATCH_SIZE = 10
+    ws.send(JSON.stringify({
+      type: 'progress',
+      repoId,
+      phase: 'diffing',
+      current: commits.length,
+      total: commits.length,
+      message: `已获取 ${commits.length} 次提交差异`
+    }))
 
-    for (let i = 0; i < commits.length; i++) {
+    // 2. 分批推送部分结果（每 10 个 commit 一批），避免阻塞事件循环
+    const BATCH_SIZE = 10
+    for (let i = 0; i < commits.length; i += BATCH_SIZE) {
       if (abortController.signal.aborted) return
 
-      const commit = commits[i]
-      const parent = i + 1 < commits.length ? commits[i + 1] : null
-      const files = await getDiff(repoPath, commit.hash, parent?.hash)
+      const batch = commits.slice(0, Math.min(i + BATCH_SIZE, commits.length))
+      const stocks = buildFileStocks(batch, repoId)
 
-      allCommits.push({
-        commit: {
-          oid: commit.hash,
-          message: commit.message,
-          author: commit.author,
-          timestamp: commit.timestamp
-        },
-        files
-      })
+      ws.send(JSON.stringify({
+        type: 'partial',
+        repoId,
+        stocks,
+        latestCommit: batch[batch.length - 1]
+      }))
 
-      // 每BATCH_SIZE个commit推送一次部分结果
-      if (i % BATCH_SIZE === 0 || i === commits.length - 1) {
-        const stocks = buildFileStocks(allCommits, repoId)
+      ws.send(JSON.stringify({
+        type: 'progress',
+        repoId,
+        phase: 'building',
+        current: Math.min(i + BATCH_SIZE, commits.length),
+        total: commits.length,
+        message: `正在生成K线数据 ${Math.min(i + BATCH_SIZE, commits.length)}/${commits.length}...`
+      }))
 
-        ws.send(JSON.stringify({
-          type: 'partial',
-          repoId,
-          stocks,
-          latestCommit: allCommits[allCommits.length - 1]
-        }))
-
-        ws.send(JSON.stringify({
-          type: 'progress',
-          repoId,
-          phase: 'diffing',
-          current: i + 1,
-          total: commits.length,
-          message: `已获取 ${i + 1}/${commits.length} 次提交差异`
-        }))
-
-        // 让出事件循环
-        await new Promise(r => setTimeout(r, 0))
-      }
+      // 让出事件循环
+      await new Promise(r => setTimeout(r, 0))
     }
 
     if (abortController.signal.aborted) return
 
-    // 3. 构建最终结果
-    ws.send(JSON.stringify({
-      type: 'progress',
-      repoId,
-      phase: 'building',
-      current: 1,
-      total: 1,
-      message: '正在生成K线数据...'
-    }))
-
-    const finalStocks = buildFileStocks(allCommits, repoId)
+    // 3. 构建并推送最终结果
+    const finalStocks = buildFileStocks(commits, repoId)
 
     ws.send(JSON.stringify({
       type: 'complete',
