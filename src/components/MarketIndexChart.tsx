@@ -1,57 +1,30 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
 import type { IChartApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
-import type { FileStock } from '../lib/types'
+import type { IndexCandle } from '../hooks/useMarketIndex'
 
-interface KlineChartProps {
-  stock: FileStock
+interface MarketIndexChartProps {
+  candles: IndexCandle[]
 }
 
-/** 默认可见 K 线数量 */
-const TARGET_VISIBLE_CANDLES = 100
-/** 最小单条 K 线宽度（像素） */
-const MIN_CANDLE_WIDTH = 2
-/** 最小 K 线间距（像素） */
-const MIN_CANDLE_GAP = 1
+const CANDLE_WIDTH = 6
+const CANDLE_GAP = 3
 
-export default function KlineChart({ stock }: KlineChartProps) {
+/**
+ * 综合指数 K 线图组件
+ */
+export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
 
-  /**
-   * 根据容器宽度计算合适的 barSpacing，使默认可见区域恰好容纳 TARGET_VISIBLE_CANDLES 条 K 线
-   *
-   * lightweight-charts 的 timeScale 中：
-   * - barSpacing = 单根 K 线占据的总宽度（含间距）
-   * - 可见区域宽度 ≈ containerWidth - rightPriceScaleWidth
-   * - 默认 fitContent 后，可见 K 线数 ≈ visibleWidth / barSpacing
-   *
-   * 因此 barSpacing = visibleWidth / TARGET_VISIBLE_CANDLES
-   */
-  const computeBarSpacing = useCallback((containerWidth: number): number => {
-    // 右侧价格轴大致宽度（lightweight-charts 默认约 50~70px，取保守值）
-    const rightPriceScaleWidth = 60
-    const visibleWidth = Math.max(200, containerWidth - rightPriceScaleWidth)
-    const spacing = visibleWidth / TARGET_VISIBLE_CANDLES
-    // 保证单根 K 线至少有 MIN_CANDLE_WIDTH 的实体 + MIN_CANDLE_GAP 的间隙
-    return Math.max(spacing, MIN_CANDLE_WIDTH + MIN_CANDLE_GAP)
-  }, [])
-
-  /** 内容宽度固定按 100 根 K 线计算，与实际数据量无关 */
-  const contentWidth = useMemo(() => {
-    const barSpacing = computeBarSpacing(800)
-    return TARGET_VISIBLE_CANDLES * barSpacing
-  }, [computeBarSpacing])
-
   useEffect(() => {
-    if (!chartContainerRef.current) return
+    if (!chartContainerRef.current || candles.length === 0) return
 
     const container = chartContainerRef.current
-    const initialBarSpacing = computeBarSpacing(container.clientWidth)
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 420,
+      height: 320,
       layout: {
         background: { color: 'transparent' },
         textColor: '#94a3b8',
@@ -82,11 +55,11 @@ export default function KlineChart({ stock }: KlineChartProps) {
         borderColor: '#1e293b',
         timeVisible: true,
         secondsVisible: false,
-        barSpacing: initialBarSpacing,
-        rightOffset: 2,
+        barSpacing: CANDLE_WIDTH + CANDLE_GAP,
+        rightOffset: 4,
         fixLeftEdge: true,
         fixRightEdge: false,
-        lockVisibleTimeRangeOnResize: true,
+        lockVisibleTimeRangeOnResize: false,
       },
       rightPriceScale: {
         borderColor: '#1e293b',
@@ -127,7 +100,7 @@ export default function KlineChart({ stock }: KlineChartProps) {
       wickDownColor: '#ff174480',
     })
 
-    const candleData: CandlestickData[] = stock.candles.map((c) => ({
+    const candleData: CandlestickData[] = candles.map((c) => ({
       time: c.time as Time,
       open: c.open,
       high: c.high,
@@ -147,7 +120,7 @@ export default function KlineChart({ stock }: KlineChartProps) {
       scaleMargins: { top: 0.8, bottom: 0 },
     })
 
-    const volumeData: HistogramData[] = stock.candles.map((c) => ({
+    const volumeData: HistogramData[] = candles.map((c) => ({
       time: c.time as Time,
       value: c.volume,
       color: c.close >= c.open ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)',
@@ -158,15 +131,11 @@ export default function KlineChart({ stock }: KlineChartProps) {
     // Fit content
     chart.timeScale().fitContent()
 
-    // Resize handler：窗口变化时重新计算 barSpacing，保持 100 条 K 线可见
+    // Resize handler
     const handleResize = () => {
-      if (!chartContainerRef.current) return
-      const newWidth = chartContainerRef.current.clientWidth
-      const newBarSpacing = computeBarSpacing(newWidth)
-      chart.applyOptions({
-        width: newWidth,
-        timeScale: { barSpacing: newBarSpacing },
-      })
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth })
+      }
     }
 
     window.addEventListener('resize', handleResize)
@@ -175,11 +144,19 @@ export default function KlineChart({ stock }: KlineChartProps) {
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [stock, computeBarSpacing])
+  }, [candles])
+
+  if (candles.length === 0) {
+    return (
+      <div className="h-80 flex items-center justify-center bg-ex-surface/50 rounded-lg border border-ex-border">
+        <span className="text-ex-dim text-sm font-mono">暂无指数数据</span>
+      </div>
+    )
+  }
 
   return (
     <div className="w-full">
-      <div ref={chartContainerRef} className="w-full" style={{ minWidth: contentWidth }} />
+      <div ref={chartContainerRef} className="w-full" />
     </div>
   )
 }

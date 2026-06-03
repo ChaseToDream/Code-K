@@ -1,4 +1,16 @@
-# Logs
+# ==================== Dependencies ====================
+node_modules
+.pnp
+.pnp.js
+
+# ==================== Build Outputs ====================
+dist
+dist-ssr
+electron/out
+release
+*.local
+
+# ==================== Logs ====================
 logs
 *.log
 npm-debug.log*
@@ -7,22 +19,38 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# ==================== Environment ====================
+.env
+.env.local
+.env.*.local
 
-# Editor directories and files
+# ==================== Editor / IDE ====================
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# other
+# ==================== OS Files ====================
+.DS_Store
+Thumbs.db
+
+# ==================== Testing ====================
+coverage
+*.lcov
+
+# ==================== Cache ====================
+.cache
+.parcel-cache
+.eslintcache
+.stylelintcache
+
+# ==================== Trae IDE ====================
 .trae/
+
+# ==================== Documentation ====================
 docs/

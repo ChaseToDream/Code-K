@@ -75,9 +75,19 @@ export default function Layout({ children }: LayoutProps) {
             <div className="h-5 w-px bg-ex-border" />
             <Link
               to="/market"
-              className="text-sm text-ex-text no-underline hover:text-ex-heading transition-colors"
+              className={`text-sm no-underline hover:text-ex-heading transition-colors ${
+                location.pathname === '/market' ? 'text-ex-accent' : 'text-ex-text'
+              }`}
             >
               行情
+            </Link>
+            <Link
+              to="/dashboard"
+              className={`text-sm no-underline hover:text-ex-heading transition-colors ${
+                location.pathname === '/dashboard' ? 'text-ex-accent' : 'text-ex-text'
+              }`}
+            >
+              大盘
             </Link>
           </div>
 

@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import Home from './pages/Home'
 import Market from './pages/Market'
+import Dashboard from './pages/Dashboard'
 import StockDetail from './pages/StockDetail'
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/market" element={<Market />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/stock/:path" element={<StockDetail />} />
           </Routes>
         </Layout>

@@ -29,6 +29,7 @@ export default function SparklineChart({ candles, width = 120, height = 32 }: Sp
       layout: {
         background: { color: 'transparent' },
         textColor: 'transparent',
+        attributionLogo: false,
       },
       grid: {
         vertLines: { visible: false },
