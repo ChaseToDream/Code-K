@@ -32,6 +32,7 @@ export default function KlineChart({ stock }: KlineChartProps) {
         textColor: '#94a3b8',
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: 'rgba(30, 41, 59, 0.5)' },
