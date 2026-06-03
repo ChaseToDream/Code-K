@@ -9,7 +9,7 @@ import { exportChartToPNG, exportStockDetails } from '../lib/export'
 export default function StockDetail() {
   const { path } = useParams<{ path: string }>()
   const decodedPath = decodeURIComponent(path || '')
-  const { activeRepo, selectStock } = useRepo()
+  const { activeRepo, selectStock, refreshRepo } = useRepo()
 
   const stock = useMemo(
     () => activeRepo?.stocks.find(s => s.path === decodedPath),
@@ -18,7 +18,17 @@ export default function StockDetail() {
 
   const [selectedCandle, setSelectedCandle] = useState<number | null>(null)
   const [showFileTree, setShowFileTree] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const chartContainerRef = useRef<HTMLDivElement>(null)
+
+  const isParsing = activeRepo?.status === 'parsing'
+
+  const handleRefresh = () => {
+    if (!activeRepo || isParsing || isRefreshing) return
+    setIsRefreshing(true)
+    refreshRepo(activeRepo.path, activeRepo.name)
+    setTimeout(() => setIsRefreshing(false), 3000)
+  }
 
   const handleViewDiff = useCallback((candleIdx: number) => {
     setSelectedCandle(candleIdx)
@@ -105,6 +115,21 @@ export default function StockDetail() {
                   ${showFileTree ? 'bg-ex-accent/20 text-ex-accent' : 'bg-ex-surface text-ex-dim hover:text-ex-text'}`}
               >
                 文件树
+              </button>
+              <button
+                onClick={handleRefresh}
+                disabled={isParsing || isRefreshing}
+                className={`px-2 py-1 text-xs font-mono rounded transition-colors cursor-pointer flex items-center gap-1
+                  ${isParsing || isRefreshing
+                    ? 'bg-ex-surface text-ex-dim cursor-not-allowed'
+                    : 'bg-ex-surface text-ex-dim hover:text-ex-accent'
+                  }`}
+                title="刷新仓库数据"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`${isRefreshing ? 'animate-spin' : ''}`}>
+                  <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+                </svg>
+                {isRefreshing ? '刷新中' : '刷新'}
               </button>
             </div>
             <p className="text-sm text-ex-dim font-mono pl-8">{stock.path}</p>

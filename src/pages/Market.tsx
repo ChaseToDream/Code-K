@@ -20,12 +20,13 @@ function formatTimeRemaining(ms: number): string {
 }
 
 export default function Market() {
-  const { activeRepo, repos, setActiveRepo, removeRepo, selectStock } = useRepo()
+  const { activeRepo, repos, setActiveRepo, removeRepo, selectStock, refreshRepo } = useRepo()
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('lines')
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all')
   const [useRegex, setUseRegex] = useState(false)
   const [authorFilter, setAuthorFilter] = useState('')
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const stocks = useMemo(() => activeRepo?.stocks || [], [activeRepo?.stocks])
   const isParsing = activeRepo?.status === 'parsing'
@@ -82,6 +83,14 @@ export default function Market() {
   const avgChange = stocks.length > 0 ? stocks.reduce((s, st) => s + st.changePercent, 0) / stocks.length : 0
   const progressPercent = parseProgress ? Math.round((parseProgress.current / Math.max(1, parseProgress.total)) * 100) : 0
 
+  const handleRefresh = () => {
+    if (!activeRepo || isParsing || isRefreshing) return
+    setIsRefreshing(true)
+    refreshRepo(activeRepo.path, activeRepo.name)
+    // 3秒后解除刷新锁定（防止用户狂点，实际解析完成会由 WebSocket 更新状态）
+    setTimeout(() => setIsRefreshing(false), 3000)
+  }
+
   // 没有仓库时显示空状态
   if (repos.length === 0) {
     return (
@@ -96,13 +105,32 @@ export default function Market() {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* 仓库标签 */}
-      <RepoTabs
-        repos={repos}
-        activeRepoId={activeRepo?.id || null}
-        onRepoSelect={setActiveRepo}
-        onRepoClose={removeRepo}
-      />
+      {/* 仓库标签 + 刷新 */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <RepoTabs
+            repos={repos}
+            activeRepoId={activeRepo?.id || null}
+            onRepoSelect={setActiveRepo}
+            onRepoClose={removeRepo}
+          />
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={isParsing || isRefreshing || !activeRepo}
+          className={`shrink-0 px-3 py-2 text-xs font-mono rounded border transition-colors cursor-pointer flex items-center gap-1.5
+            ${isParsing || isRefreshing
+              ? 'bg-ex-surface border-ex-border text-ex-dim cursor-not-allowed'
+              : 'bg-ex-surface border-ex-border text-ex-dim hover:text-ex-accent hover:border-ex-accent/40'
+            }`}
+          title="刷新仓库数据"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`${isRefreshing ? 'animate-spin' : ''}`}>
+            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+          </svg>
+          {isRefreshing ? '刷新中...' : '刷新'}
+        </button>
+      </div>
 
       {/* 解析进度 */}
       {isParsing && parseProgress && (

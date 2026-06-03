@@ -46,6 +46,15 @@ export function useRepo() {
     sendStopParse();
   }, [sendStopParse]);
 
+  // 刷新仓库：保留旧数据作兜底，触发服务端重新解析
+  // 不清空 stocks，避免刷新到新数据到达之间出现空白期
+  const refreshRepo = useCallback((repoPath: string, repoName: string, maxCommits?: number) => {
+    const repoId = generateRepoId(repoPath);
+    dispatch({ type: 'SET_REPO_STATUS', repoId, status: 'parsing' });
+    sendStartParse(repoPath, repoName, maxCommits);
+    return repoId;
+  }, [dispatch, sendStartParse]);
+
   // 删除仓库
   const removeRepo = useCallback((repoId: string) => {
     if (state.activeRepoId === repoId) {
@@ -76,6 +85,7 @@ export function useRepo() {
     addRepo,
     startParsing,
     stopParsing,
+    refreshRepo,
     removeRepo,
     setActiveRepo,
     selectStock,

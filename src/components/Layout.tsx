@@ -95,24 +95,24 @@ export default function Layout({ children }: LayoutProps) {
             {/* WebSocket 状态 */}
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-ex-green' : 'bg-ex-red'}`} />
-              <span className="text-ex-dim">{wsConnected ? 'CONNECTED' : 'DISCONNECTED'}</span>
+              <span className="text-ex-dim">{wsConnected ? '已连接' : '已断开'}</span>
             </div>
 
             <div className="h-5 w-px bg-ex-border" />
 
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-ex-green animate-pulse" />
-              <span className="text-ex-dim">ACTIVE</span>
+              <span className="text-ex-dim">上市中</span>
               <span className="text-ex-heading">{activeStocks}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-ex-gold" />
-              <span className="text-ex-dim">IPO</span>
+              <span className="text-ex-dim">新上市</span>
               <span className="text-ex-heading">{ipoStocks}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-ex-dim" />
-              <span className="text-ex-dim">DELISTED</span>
+              <span className="text-ex-dim">已退市</span>
               <span className="text-ex-heading">{delistedStocks}</span>
             </div>
             {repoName && (
