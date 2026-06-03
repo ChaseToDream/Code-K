@@ -63,11 +63,43 @@ export default function Home() {
     [navigate],
   )
 
+  /**
+   * 检测是否在 Electron 环境中
+   */
+  const isElectron = useCallback(() => {
+    return typeof window !== 'undefined' && !!(window as unknown as Record<string, unknown>).electron
+  }, [])
+
   const handleBrowseFolder = useCallback(async () => {
     try {
       setError(null)
       setVerifying(true)
-      
+
+      // Electron 环境下使用原生文件选择对话框
+      if (isElectron()) {
+        const electron = (window as unknown as { electron: { selectFolder: () => Promise<string | null> } }).electron
+        const folderPath = await electron.selectFolder()
+        if (!folderPath) {
+          setVerifying(false)
+          return
+        }
+
+        const name = folderPath.split(/[\\/]/).pop() || folderPath
+        setSelectedFolder(name)
+
+        // 通过后端 API 验证并解析
+        const res = await fetch(`/api/log?path=${encodeURIComponent(folderPath)}&limit=1`)
+        if (!res.ok) {
+          const d = await res.json()
+          throw new Error(d.error || '不是有效的 Git 仓库')
+        }
+
+        navigate('/market')
+        setVerifying(false)
+        return
+      }
+
+      // 浏览器环境使用 File System Access API
       const dirHandle = await (window as unknown as { showDirectoryPicker: (options?: { mode?: string }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({ mode: 'readwrite' })
       const name = dirHandle.name
       setSelectedFolder(name)
@@ -98,7 +130,7 @@ export default function Home() {
       setError(err instanceof Error ? err.message : '选择失败')
       setVerifying(false)
     }
-  }, [parseLocalRepo, navigate])
+  }, [parseLocalRepo, navigate, isElectron])
 
   const handleRepoClick = useCallback(async (repo: { path: string; name: string }) => {
     await handleSelectRepo(repo.path)

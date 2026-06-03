@@ -2,7 +2,17 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAppContext } from './useAppContext';
 import type { ServerMessage, StartParseMessage, RequestDiffDetail } from '../lib/types';
 
-const WS_URL = `ws://${window.location.hostname}:3001`;
+/**
+ * 获取 WebSocket 连接地址
+ * Electron 环境下使用 localhost，浏览器环境使用当前 hostname
+ */
+const getWsUrl = () => {
+  const isElectron = typeof window !== 'undefined' && !!(window as unknown as Record<string, unknown>).electron
+  const host = isElectron ? 'localhost' : window.location.hostname
+  return `ws://${host}:3001`
+}
+
+const WS_URL = getWsUrl();
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
