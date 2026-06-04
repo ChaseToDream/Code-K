@@ -1,7 +1,8 @@
 import { useCallback, useRef } from 'react'
 import { useAppContext } from './useAppContext'
 import { buildFileStocks } from '../lib/kline-data'
-import { getCachedRepo, setCachedRepo } from '../lib/cache'
+import { generateRepoId } from '../lib/kline-core'
+import { getCachedRepo, setCachedRepo, deleteCachedRepo } from '../lib/cache'
 import type { CommitDiff } from '../lib/types'
 
 export function useLocalParser() {
@@ -10,7 +11,7 @@ export function useLocalParser() {
 
   const parseLocalRepo = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
     const repoName = dirHandle.name
-    const repoId = btoa(repoName).slice(0, 12)
+    const repoId = generateRepoId(repoName)
 
     // 创建仓库记录
     dispatch({
@@ -24,8 +25,24 @@ export function useLocalParser() {
       },
     })
 
-    // 尝试从缓存加载
-    const cached = await getCachedRepo(repoId)
+    // 尝试从缓存加载（兼容旧版 btoa 生成的 repoId），缓存异常时静默跳过
+    let cached: Awaited<ReturnType<typeof getCachedRepo>> | null = null
+    try {
+      cached = await getCachedRepo(repoId)
+      if (!cached) {
+        const legacyRepoId = btoa(repoName).slice(0, 12)
+        cached = await getCachedRepo(legacyRepoId)
+        if (cached) {
+          console.log('[Cache] Migrated from legacy cache:', repoName)
+          // 用新 repoId 重新保存缓存
+          await setCachedRepo({ ...cached, id: repoId })
+          await deleteCachedRepo(legacyRepoId)
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('[Cache] 缓存读取失败，跳过缓存:', (cacheErr as Error)?.message)
+      cached = null
+    }
     if (cached && cached.stocks.length > 0) {
       console.log('[Cache] Loading from cache:', repoName)
       dispatch({
@@ -71,7 +88,8 @@ export function useLocalParser() {
           if (commits && commits.length > 0) {
             allCommits.length = 0
             allCommits.push(...commits)
-            const stocks = buildFileStocks(allCommits, repoId)
+            // Worker 输出的 commits 是逆序（新->旧），需要反转
+            const stocks = buildFileStocks([...allCommits].reverse(), repoId)
             dispatch({
               type: 'UPDATE_REPO_STOCKS',
               repoId,
@@ -84,24 +102,29 @@ export function useLocalParser() {
           if (commits && commits.length > 0) {
             allCommits.length = 0
             allCommits.push(...commits)
-            const finalStocks = buildFileStocks(allCommits, repoId)
+            // Worker 输出的 commits 是逆序（新->旧），需要反转
+            const finalStocks = buildFileStocks([...allCommits].reverse(), repoId)
             dispatch({
               type: 'UPDATE_REPO_STOCKS',
               repoId,
               stocks: finalStocks,
             })
 
-            // 缓存解析结果
-            await setCachedRepo({
-              id: repoId,
-              name: repoName,
-              path: repoName,
-              stocks: finalStocks,
-              commits: allCommits,
-              timestamp: Date.now(),
-              commitCount: allCommits.length,
-            })
-            console.log('[Cache] Saved to cache:', repoName)
+            // 缓存解析结果（失败不影响主流程）
+            try {
+              await setCachedRepo({
+                id: repoId,
+                name: repoName,
+                path: repoName,
+                stocks: finalStocks,
+                commits: allCommits,
+                timestamp: Date.now(),
+                commitCount: allCommits.length,
+              })
+              console.log('[Cache] Saved to cache:', repoName)
+            } catch (cacheErr) {
+              console.warn('[Cache] 缓存保存失败:', (cacheErr as Error)?.message)
+            }
           }
           dispatch({
             type: 'SET_REPO_STATUS',

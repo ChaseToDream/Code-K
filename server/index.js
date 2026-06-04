@@ -8,7 +8,7 @@ import { handleDiscover, handleResolve } from './routes/discover.js'
 import { handleGetLog, handleGetDiff, validateRepoPath } from './routes/repo.js'
 import { setupWebSocket } from './ws-handler.js'
 import { deleteCache, clearAllCache, getCacheStats } from './services/cache.js'
-import { generateRepoId } from './services/parser.js'
+import { generateRepoId } from './lib/kline-core.js'
 
 // 创建 HTTP 服务器
 const server = createServer(async (req, res) => {

@@ -38,7 +38,7 @@ export async function getHeadCommit(repoPath) {
 /**
  * 读取缓存
  * @param {string} repoId
- * @returns {import('../types.js').CacheEntry|null} 缓存数据或 null
+ * @returns {{repoName: string, repoPath: string, lastHead: string|null, stocks: any[], commitCount: number, timestamp: number}|null} 缓存数据或 null
  */
 export function loadCache(repoId) {
   const cachePath = getCachePath(repoId)
@@ -60,7 +60,7 @@ export function loadCache(repoId) {
 /**
  * 写入缓存
  * @param {string} repoId
- * @param {Omit<import('../types.js').CacheEntry, 'timestamp'>} data
+ * @param {{repoName: string, repoPath: string, lastHead: string|null, stocks: any[], commitCount: number}} data
  */
 export function saveCache(repoId, data) {
   const cachePath = getCachePath(repoId)

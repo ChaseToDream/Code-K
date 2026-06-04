@@ -41,7 +41,8 @@ export async function handleDiscover(req, res) {
     return true
   })
 
-  res.json({ repos: uniqueRepos })
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({ repos: uniqueRepos }))
 }
 
 /**
@@ -76,5 +77,6 @@ export async function handleResolve(req, res) {
   const uniqueRoots = [...new Set(searchRoots)]
   const { results } = resolveRepoByName(name, uniqueRoots)
 
-  res.json({ repos: results, searched: uniqueRoots.filter(r => existsSync(r)) })
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({ repos: results, searched: uniqueRoots.filter(r => existsSync(r)) }))
 }

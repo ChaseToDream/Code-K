@@ -1,7 +1,18 @@
 /**
  * K线核心逻辑 — 前后端共享的纯函数
- * 与 src/lib/kline-core.ts 保持同步
+ * ⚠️ 警告：此为 src/lib/kline-core.ts 的同步副本。请勿直接修改此文件。
+ *    修改请编辑 src/lib/kline-core.ts，然后手动同步到此处。
  */
+
+/**
+ * 生成仓库 ID
+ * 前后端统一使用 base64 编码前 12 字符
+ * @param {string} repoPath
+ * @returns {string}
+ */
+export function generateRepoId(repoPath) {
+  return Buffer.from(repoPath).toString('base64').slice(0, 12)
+}
 
 /**
  * 根据文件路径生成股票代码

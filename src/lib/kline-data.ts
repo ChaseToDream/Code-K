@@ -3,7 +3,8 @@ import { generateTicker, createCandle, calcChangePercent } from './kline-core';
 
 /**
  * 从 commit 列表构建文件股票数据（全量构建）
- * 用于浏览器端 FileSystemDirectoryHandle 解析流程
+ * 专用场景：浏览器端 FileSystemDirectoryHandle 本地解析流程（useLocalParser）
+ * ⚠️ 警告：此函数与 server/services/parser.js 的 buildFileStocks 逻辑需保持同步
  */
 export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): FileStock[] {
   const fileData = new Map<string, {
@@ -17,8 +18,8 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
     isDelisted: boolean;
   }>();
 
-  // commits 按时间正序排列
-  const chronological = [...commits].reverse();
+  // commits 需按时间正序排列（旧 -> 新），调用方负责保证
+  const chronological = commits;
 
   for (let i = 0; i < chronological.length; i++) {
     const diff = chronological[i];

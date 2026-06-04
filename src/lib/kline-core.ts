@@ -1,8 +1,24 @@
 /**
  * K线核心逻辑 — 前后端共享的纯函数
- * 与 server/lib/kline-core.js 保持同步
+ * ⚠️ 警告：此为唯一事实来源。修改后请同步更新 server/lib/kline-core.js
  */
 import type { CandleData, CommitInfo } from './types';
+
+/**
+ * 生成仓库 ID
+ * 前后端统一使用 base64 编码前 12 字符
+ * @param repoPath 仓库绝对路径
+ */
+export function generateRepoId(repoPath: string): string {
+  // 使用 TextEncoder + btoa 模拟 Buffer.from 行为，确保前后端一致
+  const encoder = new TextEncoder();
+  const data = encoder.encode(repoPath);
+  let binary = '';
+  for (let i = 0; i < data.length; i++) {
+    binary += String.fromCharCode(data[i]);
+  }
+  return btoa(binary).slice(0, 12);
+}
 
 /**
  * 根据文件路径生成股票代码

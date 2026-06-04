@@ -14,11 +14,31 @@ interface CachedRepo {
   commitCount: number
 }
 
+/**
+ * 打开 IndexedDB 数据库，若检测到存储文件损坏则自动删除并重建
+ */
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-    request.onerror = () => reject(request.error)
+    request.onerror = () => {
+      const err = request.error
+      const msg = err?.message || ''
+      // Chrome 存储文件损坏时会抛出 "Data lost due to missing file" 错误
+      if (msg.includes('Data lost due to missing file') || msg.includes('missing file')) {
+        console.warn('[Cache] IndexedDB 数据损坏，正在重建数据库...')
+        const delReq = indexedDB.deleteDatabase(DB_NAME)
+        delReq.onerror = () => {
+          // 删除也失败时直接重试（Chrome 可能已自动清理）
+          openDB().then(resolve, reject)
+        }
+        delReq.onsuccess = () => {
+          openDB().then(resolve, reject)
+        }
+        return
+      }
+      reject(err)
+    }
     request.onsuccess = () => resolve(request.result)
 
     request.onupgradeneeded = (event) => {

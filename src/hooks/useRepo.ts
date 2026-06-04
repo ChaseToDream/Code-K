@@ -1,12 +1,8 @@
 import { useCallback } from 'react';
 import { useAppContext } from './useAppContext';
 import { useWebSocket } from './useWebSocket';
+import { generateRepoId } from '../lib/kline-core';
 import type { RepoInfo, FileStock } from '../lib/types';
-
-// 生成仓库ID
-function generateRepoId(repoPath: string): string {
-  return btoa(repoPath).slice(0, 12);
-}
 
 export function useRepo() {
   const { state, dispatch } = useAppContext();
@@ -17,7 +13,7 @@ export function useRepo() {
     const repoId = generateRepoId(repoPath);
     
     // 检查是否已存在
-    if (state.repos.has(repoId)) {
+    if (state.repos[repoId]) {
       dispatch({ type: 'SET_ACTIVE_REPO', repoId });
       return repoId;
     }
@@ -74,10 +70,10 @@ export function useRepo() {
   }, [dispatch]);
 
   // 获取当前仓库
-  const activeRepo = state.activeRepoId ? state.repos.get(state.activeRepoId) : null;
+  const activeRepo = state.activeRepoId ? state.repos[state.activeRepoId] : null;
 
   // 获取所有仓库
-  const repos = Array.from(state.repos.values());
+  const repos = Object.values(state.repos);
 
   return {
     activeRepo,

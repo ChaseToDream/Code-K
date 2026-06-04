@@ -4,16 +4,17 @@
 import { existsSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { startWatching, stopWatching } from './watcher.js'
-import { getCommitsWithDiff, buildFileStocks, generateRepoId } from './services/parser.js'
+import { getCommitsWithDiff, buildFileStocks } from './services/parser.js'
+import { generateRepoId } from './lib/kline-core.js'
 import { handleRequestDiff } from './routes/diff.js'
 import { loadCache, saveCache, getHeadCommit } from './services/cache.js'
 
 /**
- * 校验 repoPath 合法性：绝对路径、无遍历、真实目录
+ * 校验 repoPath 合法性（WebSocket 层）：绝对路径、无遍历、真实目录
  * @param {string} repoPath
  * @returns {string|null} 校验通过返回规范化路径，否则返回 null
  */
-function validateRepoPath(repoPath) {
+function validateRepoPathForWS(repoPath) {
   if (!repoPath || typeof repoPath !== 'string') return null
 
   // 禁止 null 字节
@@ -98,7 +99,7 @@ export function setupWebSocket(wss) {
 async function handleStartParse(ws, message) {
   const { repoPath: rawRepoPath, repoName, maxCommits = 300 } = message
 
-  const repoPath = validateRepoPath(rawRepoPath)
+  const repoPath = validateRepoPathForWS(rawRepoPath)
   if (!repoPath) {
     ws.send(JSON.stringify({
       type: 'error',
@@ -185,6 +186,8 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
     }))
 
     // 分批推送部分结果（每 10 个 commit 一批），避免阻塞事件循环
+    // NOTE: 每批调用 buildFileStocks 会重新遍历所有已处理 commits。
+    // 对于大仓库（>1000 commits），应考虑改为增量构建或移入 Worker Thread。
     const BATCH_SIZE = 10
     for (let i = 0; i < commits.length; i += BATCH_SIZE) {
       if (abortController.signal.aborted) return
