@@ -68,7 +68,7 @@ export function saveCache(repoId, data) {
     writeFileSync(cachePath, JSON.stringify({
       ...data,
       timestamp: Date.now(),
-    }, null, 2), 'utf-8')
+    }, null, 2), { encoding: 'utf-8', mode: 0o600 })
     console.log(`[Cache] Saved: ${repoId} (${data.commitCount} commits, ${data.stocks.length} stocks)`)
   } catch (err) {
     console.error(`[Cache] Failed to save ${repoId}:`, err.message)

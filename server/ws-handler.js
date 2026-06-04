@@ -2,11 +2,39 @@
  * WebSocket 处理器 — 消息路由与解析任务编排
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { startWatching, stopWatching } from './watcher.js'
 import { getCommitsWithDiff, buildFileStocks, generateRepoId } from './services/parser.js'
 import { handleRequestDiff } from './routes/diff.js'
 import { loadCache, saveCache, getHeadCommit } from './services/cache.js'
+
+/**
+ * 校验 repoPath 合法性：绝对路径、无遍历、真实目录
+ * @param {string} repoPath
+ * @returns {string|null} 校验通过返回规范化路径，否则返回 null
+ */
+function validateRepoPath(repoPath) {
+  if (!repoPath || typeof repoPath !== 'string') return null
+
+  // 禁止 null 字节
+  if (repoPath.includes('\0')) return null
+
+  const normalized = resolve(repoPath)
+
+  // 必须是绝对路径（Windows / Unix）
+  if (!normalized.startsWith(sep) && !/^[A-Za-z]:[\\\/]/.test(normalized)) {
+    return null
+  }
+
+  // 校验是否为真实目录
+  try {
+    if (!existsSync(join(normalized, '.git'))) return null
+  } catch {
+    return null
+  }
+
+  return normalized
+}
 
 // 活跃的解析任务
 const activeParses = new Map()
@@ -68,12 +96,13 @@ export function setupWebSocket(wss) {
  * 开始解析仓库 — 优先使用缓存
  */
 async function handleStartParse(ws, message) {
-  const { repoPath, repoName, maxCommits = 300 } = message
+  const { repoPath: rawRepoPath, repoName, maxCommits = 300 } = message
 
-  if (!existsSync(join(repoPath, '.git'))) {
+  const repoPath = validateRepoPath(rawRepoPath)
+  if (!repoPath) {
     ws.send(JSON.stringify({
       type: 'error',
-      message: '不是有效的Git仓库',
+      message: '不是有效的Git仓库或路径不合法',
       code: 'INVALID_REPO'
     }))
     return
@@ -160,8 +189,14 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
     for (let i = 0; i < commits.length; i += BATCH_SIZE) {
       if (abortController.signal.aborted) return
 
-      const batch = commits.slice(0, Math.min(i + BATCH_SIZE, commits.length))
-      const stocks = buildFileStocks(batch, repoId)
+      const batch = commits.slice(i, Math.min(i + BATCH_SIZE, commits.length))
+
+      // 使用 setImmediate 将 CPU 密集型计算放到下一个事件循环 tick，避免阻塞
+      const stocks = await new Promise((resolve) => {
+        setImmediate(() => {
+          resolve(buildFileStocks(batch, repoId))
+        })
+      })
 
       ws.send(JSON.stringify({
         type: 'partial',
@@ -184,7 +219,12 @@ async function parseRepoAsync(ws, repoId, repoPath, repoName, maxCommits, abortC
 
     if (abortController.signal.aborted) return
 
-    const finalStocks = buildFileStocks(commits, repoId)
+    // 最终完整构建也使用 setImmediate 避免阻塞
+    const finalStocks = await new Promise((resolve) => {
+      setImmediate(() => {
+        resolve(buildFileStocks(commits, repoId))
+      })
+    })
 
     ws.send(JSON.stringify({
       type: 'complete',

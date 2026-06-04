@@ -33,16 +33,21 @@ export default function Market() {
   const parseProgress = activeRepo?.progress
   const parseError = activeRepo?.error
 
-  // 获取所有作者列表
+  // 获取所有作者列表 — 延迟计算：仅在需要时（点击作者筛选）才生成
+  const [authorsComputed, setAuthorsComputed] = useState(false)
   const authors = useMemo(() => {
+    if (!authorsComputed) return []
     const authorSet = new Set<string>()
-    stocks.forEach(stock => {
-      stock.candles.forEach(candle => {
+    // 限制遍历数量，防止超大仓库卡死
+    const MAX_STOCKS_TO_SCAN = 5000
+    const scanTarget = stocks.length > MAX_STOCKS_TO_SCAN ? stocks.slice(0, MAX_STOCKS_TO_SCAN) : stocks
+    for (const stock of scanTarget) {
+      for (const candle of stock.candles) {
         if (candle.author) authorSet.add(candle.author)
-      })
-    })
+      }
+    }
     return Array.from(authorSet).sort()
-  }, [stocks])
+  }, [stocks, authorsComputed])
 
   const filtered = useMemo(() => {
     let result = stocks
@@ -56,11 +61,19 @@ export default function Market() {
     // 搜索过滤
     if (search) {
       if (useRegex) {
-        try {
-          const regex = new RegExp(search, 'i')
-          result = result.filter(s => regex.test(s.path) || regex.test(s.ticker))
-        } catch {
-          // 正则表达式无效时忽略
+        // 限制正则长度，防止 ReDoS
+        const MAX_REGEX_LENGTH = 200
+        if (search.length > MAX_REGEX_LENGTH) {
+          // 超长正则直接降级为普通字符串匹配
+          const q = search.toLowerCase()
+          result = result.filter(s => s.path.toLowerCase().includes(q) || s.ticker.toLowerCase().includes(q))
+        } else {
+          try {
+            const regex = new RegExp(search, 'i')
+            result = result.filter(s => regex.test(s.path) || regex.test(s.ticker))
+          } catch {
+            // 正则表达式无效时忽略
+          }
         }
       } else {
         const q = search.toLowerCase()
@@ -200,17 +213,27 @@ export default function Market() {
           </button>
         </div>
         
-        {authors.length > 0 && (
-          <select
-            value={authorFilter}
-            onChange={(e) => setAuthorFilter(e.target.value)}
-            className="bg-ex-surface border border-ex-border rounded-lg px-3 py-2.5 text-xs font-mono text-ex-heading focus:outline-none focus:border-ex-accent/50 transition-colors cursor-pointer"
+        {/* 作者筛选：首次点击时才计算作者列表 */}
+        {authorsComputed ? (
+          authors.length > 0 && (
+            <select
+              value={authorFilter}
+              onChange={(e) => setAuthorFilter(e.target.value)}
+              className="bg-ex-surface border border-ex-border rounded-lg px-3 py-2.5 text-xs font-mono text-ex-heading focus:outline-none focus:border-ex-accent/50 transition-colors cursor-pointer"
+            >
+              <option value="">所有作者</option>
+              {authors.map(author => (
+                <option key={author} value={author}>{author}</option>
+              ))}
+            </select>
+          )
+        ) : (
+          <button
+            onClick={() => setAuthorsComputed(true)}
+            className="bg-ex-surface border border-ex-border rounded-lg px-3 py-2.5 text-xs font-mono text-ex-dim hover:text-ex-text transition-colors cursor-pointer"
           >
-            <option value="">所有作者</option>
-            {authors.map(author => (
-              <option key={author} value={author}>{author}</option>
-            ))}
-          </select>
+            加载作者列表
+          </button>
         )}
         
         <div className="flex items-center gap-1 bg-ex-surface border border-ex-border rounded-lg p-1">
