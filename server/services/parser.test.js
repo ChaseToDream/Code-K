@@ -2,7 +2,8 @@
  * parser 服务核心函数测试
  */
 import { describe, it, expect } from 'vitest'
-import { buildFileStocks, generateRepoId } from './parser.js'
+import { buildFileStocks } from './parser.js'
+import { generateRepoId } from '../lib/kline-core.js'
 
 // mock commit 序列: 时间正序（模拟 git log --reverse 输出）
 const mockCommits = [

@@ -2,7 +2,7 @@
  * Git 解析器 — commit 读取与 K 线构建
  */
 import { runGit } from '../git-utils.js'
-import { generateTicker, createCandle, calcChangePercent } from '../lib/kline-core.js'
+import { generateRepoId, generateTicker, createCandle, calcChangePercent } from '../lib/kline-core.js'
 
 /**
  * 用单次 git log 获取 commit 列表及每个 commit 的文件变更统计
@@ -12,7 +12,7 @@ import { generateTicker, createCandle, calcChangePercent } from '../lib/kline-co
  *
  * @param {string} repoPath - Git 仓库路径
  * @param {number} [limit=300] - 最大 commit 数量
- * @returns {Promise<import('../types.js').CommitDiff[]>}
+ * @returns {Promise<{commit: {oid: string, author: string, timestamp: number, message: string}, files: {path: string, additions: number, deletions: number}[]}[]>}
  */
 export async function getCommitsWithDiff(repoPath, limit = 300) {
   const logOutput = await runGit(repoPath, [
@@ -67,9 +67,9 @@ export async function getCommitsWithDiff(repoPath, limit = 300) {
  * 构建文件股票数据
  * commits 需按时间正序排列（git log --reverse 的输出）
  *
- * @param {import('../types.js').CommitDiff[]} commits
+ * @param {{commit: {oid: string, author: string, timestamp: number, message: string}, files: {path: string, additions: number, deletions: number}[]}[]} commits
  * @param {string} repoId
- * @returns {import('../types.js').FileStock[]}
+ * @returns {{path: string, ticker: string, candles: any[], currentLines: number, status: string, firstCommit: object, lastCommit: object, totalAdditions: number, totalDeletions: number, changePercent: number, repoId: string}[]}
  */
 export function buildFileStocks(commits, repoId) {
   const fileData = new Map()
@@ -168,11 +168,3 @@ export function buildFileStocks(commits, repoId) {
   return stocks
 }
 
-/**
- * 生成仓库 ID
- * @param {string} repoPath
- * @returns {string}
- */
-export function generateRepoId(repoPath) {
-  return Buffer.from(repoPath).toString('base64').slice(0, 12)
-}

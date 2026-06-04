@@ -13,12 +13,13 @@ import { getCommitsWithDiff } from '../services/parser.js'
 export async function handleGetLog(req, res, repoPath) {
   const limit = new URL(req.url, `http://${req.headers.host}`).searchParams.get('limit') || '300'
   const commits = await getCommitsWithDiff(repoPath, parseInt(limit))
-  res.json(commits.map(c => ({
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(commits.map(c => ({
     hash: c.commit.oid,
     author: c.commit.author,
     timestamp: c.commit.timestamp,
     message: c.commit.message,
-  })))
+  }))))
 }
 
 /**
@@ -48,7 +49,8 @@ export async function handleGetDiff(req, res, repoPath) {
     files.push({ path, additions, deletions })
   }
 
-  res.json(files)
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(files))
 }
 
 /**

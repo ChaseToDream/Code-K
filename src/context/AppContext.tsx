@@ -5,7 +5,7 @@ import { generateTicker, createCandle, calcChangePercent } from '../lib/kline-co
 
 // 应用状态
 interface AppState {
-  repos: Map<string, RepoInfo>;
+  repos: Record<string, RepoInfo>;
   activeRepoId: string | null;
   selectedStock: FileStock | null;
   wsConnected: boolean;
@@ -25,7 +25,7 @@ type AppAction =
 
 // 初始状态
 const initialState: AppState = {
-  repos: new Map(),
+  repos: {},
   activeRepoId: null,
   selectedStock: null,
   wsConnected: false,
@@ -92,15 +92,14 @@ function applyCommitsToStocks(
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'ADD_REPO': {
-      const newRepos = new Map(state.repos);
-      newRepos.set(action.repo.id, action.repo);
-      return { ...state, repos: newRepos, activeRepoId: action.repo.id };
+      return { ...state, repos: { ...state.repos, [action.repo.id]: action.repo }, activeRepoId: action.repo.id };
     }
     case 'REMOVE_REPO': {
-      const newRepos = new Map(state.repos);
-      newRepos.delete(action.repoId);
+      const newRepos = { ...state.repos };
+      delete newRepos[action.repoId];
+      const remainingIds = Object.keys(newRepos);
       const newActiveId = state.activeRepoId === action.repoId
-        ? newRepos.keys().next().value || null
+        ? (remainingIds[0] || null)
         : state.activeRepoId;
       return { ...state, repos: newRepos, activeRepoId: newActiveId };
     }
@@ -108,28 +107,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, activeRepoId: action.repoId };
     }
     case 'UPDATE_REPO_PROGRESS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, progress: action.progress });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, progress: action.progress } } };
     }
     case 'UPDATE_REPO_STOCKS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, stocks: action.stocks });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: action.stocks } } };
     }
     case 'APPEND_REPO_COMMITS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
+      const repo = state.repos[action.repoId];
       if (!repo) return state;
 
       const updatedStocks = applyCommitsToStocks(repo.stocks, action.commits, action.repoId);
-      newRepos.set(action.repoId, { ...repo, stocks: updatedStocks });
 
       // 如果当前选中的股票属于该仓库，同步更新
       let newSelectedStock = state.selectedStock;
@@ -138,15 +129,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         if (updated) newSelectedStock = updated;
       }
 
-      return { ...state, repos: newRepos, selectedStock: newSelectedStock };
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: updatedStocks } }, selectedStock: newSelectedStock };
     }
     case 'SET_REPO_STATUS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, status: action.status, error: action.error });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, status: action.status, error: action.error } } };
     }
     case 'SELECT_STOCK': {
       return { ...state, selectedStock: action.stock };

@@ -14,11 +14,11 @@ export function useAppContext() {
 export function useActiveRepo() {
   const { state } = useAppContext();
   const { repos, activeRepoId } = state;
-  return activeRepoId ? repos.get(activeRepoId) : null;
+  return activeRepoId ? repos[activeRepoId] : null;
 }
 
 // 辅助 Hook：获取所有仓库列表
 export function useRepos() {
   const { state } = useAppContext();
-  return Array.from(state.repos.values());
+  return Object.values(state.repos);
 }
