@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo, useCallback } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
-import type { IChartApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { FileStock } from '../lib/types'
 
 interface KlineChartProps {
@@ -17,23 +17,16 @@ const MIN_CANDLE_GAP = 1
 export default function KlineChart({ stock }: KlineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
 
   /**
    * 根据容器宽度计算合适的 barSpacing，使默认可见区域恰好容纳 TARGET_VISIBLE_CANDLES 条 K 线
-   *
-   * lightweight-charts 的 timeScale 中：
-   * - barSpacing = 单根 K 线占据的总宽度（含间距）
-   * - 可见区域宽度 ≈ containerWidth - rightPriceScaleWidth
-   * - 默认 fitContent 后，可见 K 线数 ≈ visibleWidth / barSpacing
-   *
-   * 因此 barSpacing = visibleWidth / TARGET_VISIBLE_CANDLES
    */
   const computeBarSpacing = useCallback((containerWidth: number): number => {
-    // 右侧价格轴大致宽度（lightweight-charts 默认约 50~70px，取保守值）
     const rightPriceScaleWidth = 60
     const visibleWidth = Math.max(200, containerWidth - rightPriceScaleWidth)
     const spacing = visibleWidth / TARGET_VISIBLE_CANDLES
-    // 保证单根 K 线至少有 MIN_CANDLE_WIDTH 的实体 + MIN_CANDLE_GAP 的间隙
     return Math.max(spacing, MIN_CANDLE_WIDTH + MIN_CANDLE_GAP)
   }, [])
 
@@ -43,8 +36,9 @@ export default function KlineChart({ stock }: KlineChartProps) {
     return TARGET_VISIBLE_CANDLES * barSpacing
   }, [computeBarSpacing])
 
+  // 初始化图表（只执行一次）
   useEffect(() => {
-    if (!chartContainerRef.current) return
+    if (!chartContainerRef.current || chartRef.current) return
 
     const container = chartContainerRef.current
     const initialBarSpacing = computeBarSpacing(container.clientWidth)
@@ -126,44 +120,25 @@ export default function KlineChart({ stock }: KlineChartProps) {
       wickUpColor: '#00e67680',
       wickDownColor: '#ff174480',
     })
-
-    const candleData: CandlestickData[] = stock.candles.map((c) => ({
-      time: c.time as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }))
-
-    candleSeries.setData(candleData)
+    candleSeriesRef.current = candleSeries
 
     // Volume series (histogram at bottom)
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     })
+    volumeSeriesRef.current = volumeSeries
 
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     })
 
-    const volumeData: HistogramData[] = stock.candles.map((c) => ({
-      time: c.time as Time,
-      value: c.volume,
-      color: c.close >= c.open ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)',
-    }))
-
-    volumeSeries.setData(volumeData)
-
-    // Fit content
-    chart.timeScale().fitContent()
-
-    // Resize handler：窗口变化时重新计算 barSpacing，保持 100 条 K 线可见
+    // Resize handler
     const handleResize = () => {
-      if (!chartContainerRef.current) return
+      if (!chartContainerRef.current || !chartRef.current) return
       const newWidth = chartContainerRef.current.clientWidth
       const newBarSpacing = computeBarSpacing(newWidth)
-      chart.applyOptions({
+      chartRef.current.applyOptions({
         width: newWidth,
         timeScale: { barSpacing: newBarSpacing },
       })
@@ -173,9 +148,35 @@ export default function KlineChart({ stock }: KlineChartProps) {
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      candleSeriesRef.current = null
+      volumeSeriesRef.current = null
+      chartRef.current = null
       chart.remove()
     }
-  }, [stock, computeBarSpacing])
+  }, [computeBarSpacing])
+
+  // 数据更新：stock 变化时复用 chart 实例，仅更新 series 数据
+  useEffect(() => {
+    if (!chartRef.current || !candleSeriesRef.current || !volumeSeriesRef.current) return
+
+    const candleData: CandlestickData[] = stock.candles.map((c) => ({
+      time: c.time as Time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }))
+    candleSeriesRef.current.setData(candleData)
+
+    const volumeData: HistogramData[] = stock.candles.map((c) => ({
+      time: c.time as Time,
+      value: c.volume,
+      color: c.close >= c.open ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+    }))
+    volumeSeriesRef.current.setData(volumeData)
+
+    chartRef.current.timeScale().fitContent()
+  }, [stock])
 
   return (
     <div className="w-full">

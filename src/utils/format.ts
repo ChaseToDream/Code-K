@@ -49,17 +49,6 @@ export function truncate(str: string, maxLength: number): string {
   return str.slice(0, maxLength) + '...';
 }
 
-// 生成股票代码
-export function generateTicker(path: string): string {
-  const parts = path.split('/');
-  const filename = parts[parts.length - 1];
-  const name = filename.replace(/\.[^.]+$/, '').toUpperCase();
-  const ext = filename.includes('.') ? filename.split('.').pop()?.toUpperCase() || '' : '';
-
-  const shortName = name.slice(0, 6);
-  return ext ? `${shortName}.${ext.slice(0, 3)}` : shortName;
-}
-
 // 获取状态颜色
 export function getStatusColor(status: string): string {
   switch (status) {

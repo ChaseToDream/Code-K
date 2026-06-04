@@ -5,7 +5,7 @@ import { useLocalParser } from '../hooks/useLocalParser'
 
 export default function Home() {
   const navigate = useNavigate()
-  const { wsConnected } = useRepo()
+  const { wsConnected, startParsing } = useRepo()
   const { parseLocalRepo } = useLocalParser()
   const [loading, setLoading] = useState(false)
   const [verifying, setVerifying] = useState(false)
@@ -52,7 +52,9 @@ export default function Home() {
         if (!Array.isArray(data) || data.length === 0) {
           throw new Error('没有找到提交记录')
         }
-        
+
+        const name = repoPath.split(/[\\/]/).pop() || repoPath
+        startParsing(repoPath, name)
         navigate('/market')
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : '验证失败')
@@ -60,7 +62,7 @@ export default function Home() {
         setVerifying(false)
       }
     },
-    [navigate],
+    [navigate, startParsing],
   )
 
   /**
@@ -94,6 +96,8 @@ export default function Home() {
           throw new Error(d.error || '不是有效的 Git 仓库')
         }
 
+        // 触发服务端解析并通过 WebSocket 获取数据
+        startParsing(folderPath, name)
         navigate('/market')
         setVerifying(false)
         return

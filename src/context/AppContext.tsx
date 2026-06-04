@@ -1,10 +1,11 @@
 import { createContext, useReducer } from 'react';
 import type { ReactNode } from 'react';
 import type { RepoInfo, FileStock, ParseProgress, CommitDiff } from '../lib/types';
+import { generateTicker, createCandle, calcChangePercent } from '../lib/kline-core';
 
 // 应用状态
 interface AppState {
-  repos: Map<string, RepoInfo>;
+  repos: Record<string, RepoInfo>;
   activeRepoId: string | null;
   selectedStock: FileStock | null;
   wsConnected: boolean;
@@ -24,7 +25,7 @@ type AppAction =
 
 // 初始状态
 const initialState: AppState = {
-  repos: new Map(),
+  repos: {},
   activeRepoId: null,
   selectedStock: null,
   wsConnected: false,
@@ -48,23 +49,13 @@ function applyCommitsToStocks(
       let stock = stockMap.get(file.path);
 
       if (!stock) {
-        // 新文件首次出现
+        // IPO：新文件首次出现
         const open = 0;
         const close = Math.max(0, file.additions - file.deletions);
         stock = {
           path: file.path,
           ticker: generateTicker(file.path),
-          candles: [{
-            time: commit.timestamp,
-            open,
-            high: Math.max(open, close),
-            low: Math.min(open, close),
-            close,
-            volume: file.additions + file.deletions,
-            commitMessage: commit.message,
-            commitHash: commit.oid.slice(0, 8),
-            author: commit.author,
-          }],
+          candles: [createCandle(open, close, file.additions + file.deletions, commit)],
           currentLines: close,
           status: 'ipo',
           firstCommit: commit,
@@ -81,28 +72,13 @@ function applyCommitsToStocks(
         const change = file.additions - file.deletions;
         const close = Math.max(0, open + change);
 
-        stock.candles.push({
-          time: commit.timestamp,
-          open,
-          high: Math.max(open, close),
-          low: Math.min(open, close),
-          close,
-          volume: file.additions + file.deletions,
-          commitMessage: commit.message,
-          commitHash: commit.oid.slice(0, 8),
-          author: commit.author,
-        });
-
+        stock.candles.push(createCandle(open, close, file.additions + file.deletions, commit));
         stock.currentLines = close;
         stock.totalAdditions += file.additions;
         stock.totalDeletions += file.deletions;
         stock.lastCommit = commit;
         stock.status = close === 0 && file.deletions > 0 ? 'delisted' : 'active';
-
-        const lastCandle = stock.candles[stock.candles.length - 1];
-        stock.changePercent = lastCandle.open > 0
-          ? ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100
-          : (lastCandle.close > 0 ? 100 : 0);
+        stock.changePercent = calcChangePercent(stock.candles[stock.candles.length - 1]);
       }
     }
   }
@@ -112,31 +88,18 @@ function applyCommitsToStocks(
   return result;
 }
 
-/**
- * 根据文件路径生成股票代码
- */
-function generateTicker(path: string): string {
-  const parts = path.split('/');
-  const filename = parts[parts.length - 1];
-  const name = filename.replace(/\.[^.]+$/, '').toUpperCase();
-  const ext = filename.includes('.') ? filename.split('.').pop()!.toUpperCase() : '';
-  const shortName = name.slice(0, 6);
-  return ext ? `${shortName}.${ext.slice(0, 3)}` : shortName;
-}
-
 // Reducer
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'ADD_REPO': {
-      const newRepos = new Map(state.repos);
-      newRepos.set(action.repo.id, action.repo);
-      return { ...state, repos: newRepos, activeRepoId: action.repo.id };
+      return { ...state, repos: { ...state.repos, [action.repo.id]: action.repo }, activeRepoId: action.repo.id };
     }
     case 'REMOVE_REPO': {
-      const newRepos = new Map(state.repos);
-      newRepos.delete(action.repoId);
+      const newRepos = { ...state.repos };
+      delete newRepos[action.repoId];
+      const remainingIds = Object.keys(newRepos);
       const newActiveId = state.activeRepoId === action.repoId
-        ? newRepos.keys().next().value || null
+        ? (remainingIds[0] || null)
         : state.activeRepoId;
       return { ...state, repos: newRepos, activeRepoId: newActiveId };
     }
@@ -144,28 +107,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, activeRepoId: action.repoId };
     }
     case 'UPDATE_REPO_PROGRESS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, progress: action.progress });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, progress: action.progress } } };
     }
     case 'UPDATE_REPO_STOCKS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, stocks: action.stocks });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: action.stocks } } };
     }
     case 'APPEND_REPO_COMMITS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
+      const repo = state.repos[action.repoId];
       if (!repo) return state;
 
       const updatedStocks = applyCommitsToStocks(repo.stocks, action.commits, action.repoId);
-      newRepos.set(action.repoId, { ...repo, stocks: updatedStocks });
 
       // 如果当前选中的股票属于该仓库，同步更新
       let newSelectedStock = state.selectedStock;
@@ -174,15 +129,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         if (updated) newSelectedStock = updated;
       }
 
-      return { ...state, repos: newRepos, selectedStock: newSelectedStock };
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: updatedStocks } }, selectedStock: newSelectedStock };
     }
     case 'SET_REPO_STATUS': {
-      const newRepos = new Map(state.repos);
-      const repo = newRepos.get(action.repoId);
-      if (repo) {
-        newRepos.set(action.repoId, { ...repo, status: action.status, error: action.error });
-      }
-      return { ...state, repos: newRepos };
+      const repo = state.repos[action.repoId];
+      if (!repo) return state;
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, status: action.status, error: action.error } } };
     }
     case 'SELECT_STOCK': {
       return { ...state, selectedStock: action.stock };

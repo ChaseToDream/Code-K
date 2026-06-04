@@ -54,6 +54,19 @@ export default function StockDetail() {
     }
   }, [stock])
 
+  // memo 化 high/low，避免每次渲染重复遍历（必须在 early return 之前调用）
+  const { high, low } = useMemo(() => {
+    if (!stock || stock.candles.length === 0) return { high: 0, low: 0 }
+    let h = stock.candles[0].high
+    let l = stock.candles[0].low
+    for (let i = 1; i < stock.candles.length; i++) {
+      const c = stock.candles[i]
+      if (c.high > h) h = c.high
+      if (c.low < l) l = c.low
+    }
+    return { high: h, low: l }
+  }, [stock])
+
   if (!stock) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -153,8 +166,8 @@ export default function StockDetail() {
         <div className="grid grid-cols-6 gap-4">
           {[
             { label: 'OPEN', value: stock.candles[0]?.open.toLocaleString() || '0' },
-            { label: 'HIGH', value: Math.max(...stock.candles.map(c => c.high)).toLocaleString() },
-            { label: 'LOW', value: Math.min(...stock.candles.map(c => c.low)).toLocaleString() },
+            { label: 'HIGH', value: high.toLocaleString() },
+            { label: 'LOW', value: low.toLocaleString() },
             { label: 'VOLUME', value: totalVolume.toLocaleString() },
             { label: 'TRADES', value: stock.candles.length.toString() },
             { label: 'LISTED', value: `${firstDate} - ${lastDate}` },

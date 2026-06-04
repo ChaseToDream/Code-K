@@ -11,6 +11,26 @@ const __dirname = dirname(__filename)
 // 环境判断
 const isDev = process.env.NODE_ENV === 'development'
 
+/**
+ * 获取应用根目录（兼容开发、打包、portable 模式）
+ */
+function getAppRoot(): string {
+  if (isDev) {
+    return join(__dirname, '..')
+  }
+  // portable 模式下 process.resourcesPath 指向临时解压目录
+  // 用 app.getAppPath() 更可靠，它指向 app.asar 或 unpacked 目录的父级
+  const appPath = app.getAppPath()
+  // app.getAppPath() 在 asar 模式下指向 app.asar 文件本身，需要取父目录
+  return dirname(appPath)
+}
+
+// 防止多开 - 必须在 app.whenReady() 之前调用
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+}
+
 // 窗口状态
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -32,8 +52,8 @@ const perfMarks = {
 function startBackend(): Promise<void> {
   return new Promise((resolve, reject) => {
     const serverPath = isDev
-      ? join(__dirname, '..', 'server', 'index.js')
-      : join(process.resourcesPath, 'server', 'index.js')
+      ? join(__dirname, '..', 'server-out', 'index.js')
+      : join(getAppRoot(), 'resources', 'server', 'index.js')
 
     if (!existsSync(serverPath)) {
       reject(new Error(`后端服务文件不存在: ${serverPath}`))
@@ -118,7 +138,7 @@ function createWindow() {
     },
     // 性能优化选项
     webPreferences: {
-      preload: join(__dirname, 'preload.mjs'),
+      preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -230,7 +250,11 @@ function createTray() {
   tray.setContextMenu(contextMenu)
   tray.on('click', () => {
     if (mainWindow) {
-      mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show()
+      if (mainWindow.isVisible()) {
+        mainWindow.hide()
+      } else {
+        mainWindow.show()
+      }
     } else {
       createWindow()
     }
@@ -364,6 +388,15 @@ ipcMain.handle('window:close', () => mainWindow?.close())
 
 // ==================== 应用生命周期 ====================
 
+// 第二个实例启动时的处理
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  }
+})
+
 app.whenReady().then(async () => {
   try {
     // 启动后端服务
@@ -409,20 +442,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   stopBackend()
 })
-
-// 防止多开
-const gotTheLock = app.requestSingleInstanceLock()
-if (!gotTheLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  })
-}
 
 // 垃圾回收提示（每5分钟）
 if (!isDev) {
