@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, appendFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, appendFileSync, statSync, renameSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
 
 /**
  * 日志级别
@@ -59,11 +59,11 @@ class Logger {
     try {
       // 检查日志文件大小
       if (existsSync(this.logFile)) {
-        const stats = require('node:fs').statSync(this.logFile)
+        const stats = statSync(this.logFile)
         if (stats.size > this.maxLogSize) {
           // 轮转日志
           const backupFile = join(this.logDir, `app-${Date.now()}.log`)
-          require('node:fs').renameSync(this.logFile, backupFile)
+          renameSync(this.logFile, backupFile)
         }
       }
 
@@ -136,7 +136,7 @@ class Logger {
   getRecentLogs(lines: number = 100): string {
     try {
       if (!existsSync(this.logFile)) return ''
-      const content = require('node:fs').readFileSync(this.logFile, 'utf-8')
+      const content = readFileSync(this.logFile, 'utf-8')
       const allLines = content.split('\n').filter(Boolean)
       return allLines.slice(-lines).join('\n')
     } catch {
@@ -149,7 +149,6 @@ class Logger {
    */
   cleanupOldLogs(maxAgeDays: number = 7) {
     try {
-      const { readdirSync, statSync, unlinkSync } = require('node:fs')
       const files = readdirSync(this.logDir)
       const now = Date.now()
       const maxAge = maxAgeDays * 24 * 60 * 60 * 1000

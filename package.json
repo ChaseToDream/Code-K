@@ -13,9 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "electron:dev": "npm run build:electron && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "npm run build && npm run build:electron && electron-builder",
-    "build:electron": "tsc -p electron/tsconfig.json",
+    "electron:dev": "set NODE_ENV=development&& npm run build:electron && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "npm run build && set NODE_ENV=production&& npm run build:electron && electron-builder",
+    "build:electron": "node scripts/build-electron.js",
     "electron:preview": "npm run build && npm run build:electron && electron ."
   },
   "dependencies": {
@@ -45,6 +45,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
@@ -61,38 +62,26 @@
     "files": [
       "dist/**/*",
       "electron/out/**/*",
-      "server/**/*",
-      "node_modules/**/*"
+      "package.json"
     ],
     "extraResources": [
       {
-        "from": "server",
+        "from": "server-out",
         "to": "server"
       }
     ],
     "win": {
       "target": [
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
-      "icon": "public/favicon.svg"
+      "icon": "public/favicon.ico",
+      "signAndEditExecutable": false
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Code-K"
+    "portable": {
+      "artifactName": "Code-K-${version}-Portable.${ext}"
     }
   }
 }

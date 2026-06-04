@@ -75,7 +75,8 @@ class UpdateManager {
    * 检查更新（模拟实现）
    * 实际项目中应该从服务器获取最新版本信息
    */
-  async checkForUpdates(parentWindow?: BrowserWindow): Promise<UpdateInfo | null> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async checkForUpdates(_parentWindow?: BrowserWindow): Promise<UpdateInfo | null> {
     logger.info('Checking for updates...', 'Updater')
 
     try {
@@ -118,16 +119,18 @@ class UpdateManager {
     })
 
     switch (result.response) {
-      case 0: // 立即下载
+      case 0: { // 立即下载
         // 打开下载页面
         const { shell } = await import('electron')
         await shell.openExternal(updateInfo.downloadUrl)
         break
-      case 2: // 跳过此版本
+      }
+      case 2: { // 跳过此版本
         const info = this.readVersionInfo()
         info.skippedVersion = updateInfo.version
         this.saveVersionInfo(info)
         break
+      }
     }
   }
 
