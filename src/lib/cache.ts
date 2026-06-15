@@ -4,6 +4,12 @@ const DB_NAME = 'codex-cache'
 const DB_VERSION = 1
 const STORE_NAME = 'repos'
 
+/**
+ * 缓存数据结构版本。当 K 线数据语义发生不兼容变更（如影线 high/low 计算方式改变）时递增，
+ * 旧版本缓存会被自动视为未命中，触发重新解析，避免展示陈旧数据。
+ */
+export const CACHE_SCHEMA_VERSION = 2
+
 interface CachedRepo {
   id: string
   name: string
@@ -12,6 +18,8 @@ interface CachedRepo {
   commits: CommitDiff[]
   timestamp: number
   commitCount: number
+  /** 数据结构版本，缺失或与 CACHE_SCHEMA_VERSION 不一致时缓存失效 */
+  schemaVersion?: number
 }
 
 /**
@@ -59,7 +67,18 @@ export async function getCachedRepo(repoId: string): Promise<CachedRepo | null> 
       const request = store.get(repoId)
 
       request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result || null)
+      request.onsuccess = () => {
+        const result = request.result || null
+        // schemaVersion 不匹配时视为未命中，触发上层重新解析
+        if (result && result.schemaVersion !== CACHE_SCHEMA_VERSION) {
+          console.warn(
+            `[Cache] schemaVersion mismatch (cached=${result.schemaVersion}, expected=${CACHE_SCHEMA_VERSION}), treating as miss`
+          )
+          resolve(null)
+          return
+        }
+        resolve(result)
+      }
     })
   } catch {
     return null

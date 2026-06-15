@@ -1,17 +1,19 @@
 import { useCallback } from 'react';
 import { useAppContext } from './useAppContext';
 import { useWebSocket } from './useWebSocket';
+import { useLocalParser } from './useLocalParser';
 import { generateRepoId } from '../lib/kline-core';
 import type { RepoInfo, FileStock } from '../lib/types';
 
 export function useRepo() {
   const { state, dispatch } = useAppContext();
   const { sendStartParse, sendStopParse } = useWebSocket();
+  const { refreshLocalRepo } = useLocalParser();
 
   // 添加仓库
   const addRepo = useCallback((repoPath: string, repoName: string) => {
     const repoId = generateRepoId(repoPath);
-    
+
     // 检查是否已存在
     if (state.repos[repoId]) {
       dispatch({ type: 'SET_ACTIVE_REPO', repoId });
@@ -24,6 +26,7 @@ export function useRepo() {
       name: repoName,
       status: 'idle',
       stocks: [],
+      parseMode: 'backend',
     };
 
     dispatch({ type: 'ADD_REPO', repo: newRepo });
@@ -42,14 +45,24 @@ export function useRepo() {
     sendStopParse();
   }, [sendStopParse]);
 
-  // 刷新仓库：保留旧数据作兜底，触发服务端重新解析
-  // 不清空 stocks，避免刷新到新数据到达之间出现空白期
-  const refreshRepo = useCallback((repoPath: string, repoName: string, maxCommits?: number) => {
+  // 刷新仓库：根据仓库的解析模式路由到对应刷新路径
+  // - local 模式：清除缓存并用 Worker 重新解析（无需后端）
+  // - backend 模式：保留旧数据作兜底，触发服务端重新解析
+  const refreshRepo = useCallback(async (repoPath: string, repoName: string, maxCommits?: number) => {
     const repoId = generateRepoId(repoPath);
+    const repo = state.repos[repoId];
+
+    // 本地解析模式：走 Worker 刷新
+    if (repo?.parseMode === 'local') {
+      const handled = await refreshLocalRepo(repoId);
+      if (handled) return repoId;
+    }
+
+    // 后端解析模式（或本地刷新未命中）：走 WebSocket
     dispatch({ type: 'SET_REPO_STATUS', repoId, status: 'parsing' });
     sendStartParse(repoPath, repoName, maxCommits);
     return repoId;
-  }, [dispatch, sendStartParse]);
+  }, [state.repos, dispatch, sendStartParse, refreshLocalRepo]);
 
   // 删除仓库
   const removeRepo = useCallback((repoId: string) => {

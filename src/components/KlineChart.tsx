@@ -2,23 +2,11 @@ import { useEffect, useRef } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { FileStock } from '../lib/types'
+import { FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
 
 interface KlineChartProps {
   stock: FileStock
 }
-
-/** 影线（上下影线）样式配置 —— 与 K 线主体配色一致，使用实色确保影线清晰可辨 */
-const WICK_STYLE = {
-  upColor: '#00e676',
-  downColor: '#ff1744',
-} as const
-
-/**
- * 固定的 K 线宽度（相邻蜡烛中心间距，像素）。
- * 固定后不再随容器宽度重算：数据少时不被拉伸，屏幕宽度变化时单根 K 线宽度保持一致。
- * 滚轮缩放仍可临时改变可见比例（lightweight-charts 内置），但不回写此默认值。
- */
-export const FIXED_BAR_SPACING = 12
 
 export default function KlineChart({ stock }: KlineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)

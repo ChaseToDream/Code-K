@@ -69,6 +69,10 @@ export interface RepoInfo {
   progress?: ParseProgress;
   stocks: FileStock[];
   error?: string;
+  /** 解析模式：local = 浏览器端 isomorphic-git；backend = WebSocket 后端 */
+  parseMode?: 'local' | 'backend';
+  /** 本地解析模式的目录句柄（parseMode === 'local' 时存在，用于刷新） */
+  dirHandle?: FileSystemDirectoryHandle;
 }
 
 // 提交详情（用于diff查看）

@@ -2,13 +2,11 @@ import { useEffect, useRef } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
 import type { IChartApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { IndexCandle } from '../hooks/useMarketIndex'
+import { FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
 
 interface MarketIndexChartProps {
   candles: IndexCandle[]
 }
-
-const CANDLE_WIDTH = 6
-const CANDLE_GAP = 3
 
 /**
  * 综合指数 K 线图组件
@@ -55,11 +53,11 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
         borderColor: '#1e293b',
         timeVisible: true,
         secondsVisible: false,
-        barSpacing: CANDLE_WIDTH + CANDLE_GAP,
+        barSpacing: FIXED_BAR_SPACING,
         rightOffset: 4,
         fixLeftEdge: true,
         fixRightEdge: false,
-        lockVisibleTimeRangeOnResize: false,
+        lockVisibleTimeRangeOnResize: true,
       },
       rightPriceScale: {
         borderColor: '#1e293b',
@@ -96,8 +94,8 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
       downColor: '#ff1744',
       borderUpColor: '#00e676',
       borderDownColor: '#ff1744',
-      wickUpColor: '#00e67680',
-      wickDownColor: '#ff174480',
+      wickUpColor: WICK_STYLE.upColor,
+      wickDownColor: WICK_STYLE.downColor,
     })
 
     const candleData: CandlestickData[] = candles.map((c) => ({
@@ -128,10 +126,10 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
 
     volumeSeries.setData(volumeData)
 
-    // Fit content
-    chart.timeScale().fitContent()
+    // 保持固定宽度：对齐到右端，而非 fitContent（后者会把数据拉伸到容器宽度）
+    chart.timeScale().scrollToRealTime()
 
-    // Resize handler
+    // Resize handler —— 仅更新容器宽度，不重算 barSpacing（保持 K 线固定宽度）
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth })

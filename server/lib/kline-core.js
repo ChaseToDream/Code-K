@@ -30,13 +30,13 @@ export function generateTicker(path) {
 /**
  * 创建一根 K 线蜡烛
  *
- * 影线（high/low）语义：
- * - 默认（不传 options，向后兼容）：high = max(open, close)、low = min(open, close)，影线长度为 0
- * - 传入 additions/deletions（推荐）：影线反映本次 commit 期间文件行数的波动幅度
- *   - high = max(open + additions, close)  —— 文件膨胀到的峰值
- *   - low  = min(max(0, open - deletions), close) —— 文件收缩到的谷底（不低于 0）
+ * 影线（high/low）语义 —— 对标真实股票蜡烛：
+ * - 真实股票：high = 期间最高价，low = 期间最低价，始终满足 high ≥ 实体 ≥ low
+ * - 代码仓库：一次 commit 期间文件行数会波动，极值为：
+ *   - high = open + additions（先加后删时的峰值，文件膨胀到的最大行数）
+ *   - low  = max(0, open − deletions)（先删后加时的谷底，文件收缩到的最小行数，不低于 0）
  *
- * 不变量：high >= max(open, close) >= min(open, close) >= low >= 0
+ * 不变量（恒成立）：high ≥ max(open, close) ≥ min(open, close) ≥ low ≥ 0
  *
  * @param {number} open
  * @param {number} close
@@ -49,12 +49,13 @@ export function createCandle(open, close, volume, commit, options) {
     options !== undefined &&
     (typeof options.additions === 'number' || typeof options.deletions === 'number')
 
-  const high = hasWickData
-    ? Math.max(open + (options.additions ?? 0), close)
-    : Math.max(open, close)
-  const low = hasWickData
-    ? Math.min(Math.max(0, open - (options.deletions ?? 0)), close)
-    : Math.min(open, close)
+  // 影线峰值/谷底
+  const peak = open + (options?.additions ?? 0)
+  const trough = Math.max(0, open - (options?.deletions ?? 0))
+
+  // high 至少为实体上端，low 至多为实体下端（防御性兜底，保证不变量恒成立）
+  const high = hasWickData ? Math.max(peak, open, close) : Math.max(open, close)
+  const low = hasWickData ? Math.min(trough, open, close) : Math.min(open, close)
 
   return {
     time: commit.timestamp,

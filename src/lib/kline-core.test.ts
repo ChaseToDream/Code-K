@@ -91,6 +91,24 @@ describe('createCandle', () => {
       expect(candle.high).toBe(50)  // 10 + 40
     })
 
+    it('混合增删：同时有上影线和下影线（对标真实股票）', () => {
+      // open=100, additions=80, deletions=60 → close=120
+      // peak = 100+80 = 180（上影线顶端）
+      // trough = max(0, 100-60) = 40（下影线底端）
+      const candle = createCandle(100, 120, 140, mockCommit, { additions: 80, deletions: 60 })
+      expect(candle.high).toBe(180) // 上影线 = 180 - 120 = 60
+      expect(candle.low).toBe(40)   // 下影线 = 100 - 40 = 60
+      expect(candle.close).toBe(120)
+    })
+
+    it('纯增只有上影线无下影线（对标真实股票纯阳线）', () => {
+      // open=50, additions=100, deletions=0 → close=150
+      // peak = 150, trough = max(0, 50) = 50 = open → 无下影线
+      const candle = createCandle(50, 150, 100, mockCommit, { additions: 100, deletions: 0 })
+      expect(candle.high).toBe(150) // = open + additions = close（无上影线，因为 close 达到峰值）
+      expect(candle.low).toBe(50)   // = open（无下影线，因为文件单调增长）
+    })
+
     it('additions=0 且 deletions=0：影线退化为实体端点（与旧逻辑一致）', () => {
       const candle = createCandle(100, 100, 0, mockCommit, { additions: 0, deletions: 0 })
       expect(candle.high).toBe(100)

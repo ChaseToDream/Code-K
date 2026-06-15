@@ -6,6 +6,13 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runGit } from '../git-utils.js'
 
+/**
+ * 缓存数据结构版本。当 K 线数据语义发生不兼容变更（如影线 high/low 计算方式改变）时递增，
+ * 旧版本缓存会被自动视为未命中，触发重新解析，避免展示陈旧数据。
+ * 需与前端 src/lib/cache.ts 的 CACHE_SCHEMA_VERSION 保持一致。
+ */
+export const CACHE_SCHEMA_VERSION = 2
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CACHE_DIR = join(__dirname, '..', 'cache')
 
@@ -38,7 +45,7 @@ export async function getHeadCommit(repoPath) {
 /**
  * 读取缓存
  * @param {string} repoId
- * @returns {{repoName: string, repoPath: string, lastHead: string|null, stocks: any[], commitCount: number, timestamp: number}|null} 缓存数据或 null
+ * @returns {{repoName: string, repoPath: string, lastHead: string|null, stocks: any[], commitCount: number, timestamp: number, schemaVersion?: number}|null} 缓存数据或 null
  */
 export function loadCache(repoId) {
   const cachePath = getCachePath(repoId)
@@ -49,6 +56,14 @@ export function loadCache(repoId) {
     // 缓存过期检查（7天）
     if (Date.now() - data.timestamp > 7 * 24 * 60 * 60 * 1000) {
       unlinkSync(cachePath)
+      return null
+    }
+    // schemaVersion 不匹配时视为未命中，触发上层重新解析
+    if (data.schemaVersion !== CACHE_SCHEMA_VERSION) {
+      console.warn(
+        `[Cache] schemaVersion mismatch for ${repoId} (cached=${data.schemaVersion}, expected=${CACHE_SCHEMA_VERSION}), invalidating`
+      )
+      try { unlinkSync(cachePath) } catch { /* ignore */ }
       return null
     }
     return data
@@ -67,6 +82,7 @@ export function saveCache(repoId, data) {
   try {
     writeFileSync(cachePath, JSON.stringify({
       ...data,
+      schemaVersion: CACHE_SCHEMA_VERSION,
       timestamp: Date.now(),
     }, null, 2), { encoding: 'utf-8', mode: 0o600 })
     console.log(`[Cache] Saved: ${repoId} (${data.commitCount} commits, ${data.stocks.length} stocks)`)
