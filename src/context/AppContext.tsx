@@ -46,6 +46,15 @@ function applyCommitsToStocks(
     const { commit, files } = diff;
 
     for (const file of files) {
+      // 重命名：把旧路径的 stock 迁移到新路径（与 server buildFileStocks 保持一致）
+      if (file.renamedFrom && file.path !== file.renamedFrom && stockMap.has(file.renamedFrom)) {
+        const oldStock = stockMap.get(file.renamedFrom)!;
+        stockMap.delete(file.renamedFrom);
+        oldStock.path = file.path;
+        oldStock.ticker = generateTicker(file.path);
+        stockMap.set(file.path, oldStock);
+      }
+
       let stock = stockMap.get(file.path);
 
       if (!stock) {
@@ -55,7 +64,10 @@ function applyCommitsToStocks(
         stock = {
           path: file.path,
           ticker: generateTicker(file.path),
-          candles: [createCandle(open, close, file.additions + file.deletions, commit)],
+          candles: [createCandle(open, close, file.additions + file.deletions, commit, {
+            additions: file.additions,
+            deletions: file.deletions,
+          })],
           currentLines: close,
           status: 'ipo',
           firstCommit: commit,
@@ -72,7 +84,10 @@ function applyCommitsToStocks(
         const change = file.additions - file.deletions;
         const close = Math.max(0, open + change);
 
-        stock.candles.push(createCandle(open, close, file.additions + file.deletions, commit));
+        stock.candles.push(createCandle(open, close, file.additions + file.deletions, commit, {
+          additions: file.additions,
+          deletions: file.deletions,
+        }));
         stock.currentLines = close;
         stock.totalAdditions += file.additions;
         stock.totalDeletions += file.deletions;

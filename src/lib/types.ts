@@ -11,6 +11,10 @@ export interface FileChange {
   deletions: number;
   oldContent?: string;
   newContent?: string;
+  /** 重命名来源路径（当 git numstat 检测到文件移动/重命名时填充） */
+  renamedFrom?: string;
+  /** 标记为二进制文件（无行数可统计，不生成 K 线） */
+  isBinary?: boolean;
 }
 
 export interface CommitDiff {

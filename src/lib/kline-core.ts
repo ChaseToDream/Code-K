@@ -34,19 +34,49 @@ export function generateTicker(path: string): string {
 }
 
 /**
+ * 影线计算的可配置选项
+ */
+export interface CandleWickOptions {
+  /** 本次 commit 内新增的行数（用于推算 high 峰值） */
+  additions?: number;
+  /** 本次 commit 内删除的行数（用于推算 low 谷值） */
+  deletions?: number;
+}
+
+/**
  * 创建一根 K 线蜡烛
+ *
+ * 影线（high/low）语义：
+ * - 默认（不传 options，向后兼容）：high = max(open, close)、low = min(open, close)，影线长度为 0
+ * - 传入 additions/deletions（推荐）：影线反映本次 commit 期间文件行数的波动幅度
+ *   - high = max(open + additions, close)  —— 文件膨胀到的峰值
+ *   - low  = min(max(0, open - deletions), close) —— 文件收缩到的谷底（不低于 0）
+ *
+ * 不变量：high >= max(open, close) >= min(open, close) >= low >= 0
  */
 export function createCandle(
   open: number,
   close: number,
   volume: number,
   commit: CommitInfo,
+  options?: CandleWickOptions,
 ): CandleData {
+  const hasWickData =
+    options !== undefined &&
+    (typeof options.additions === 'number' || typeof options.deletions === 'number');
+
+  const high = hasWickData
+    ? Math.max(open + (options!.additions ?? 0), close)
+    : Math.max(open, close);
+  const low = hasWickData
+    ? Math.min(Math.max(0, open - (options!.deletions ?? 0)), close)
+    : Math.min(open, close);
+
   return {
     time: commit.timestamp,
     open,
-    high: Math.max(open, close),
-    low: Math.min(open, close),
+    high,
+    low,
     close,
     volume,
     commitMessage: commit.message,

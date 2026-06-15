@@ -98,6 +98,59 @@ describe('buildFileStocks', () => {
     const stocks = buildFileStocks([], 'test')
     expect(stocks.length).toBe(0)
   })
+
+  it('重命名：旧文件历史迁移到新路径（资产过户）', () => {
+    const renameCommits = [
+      // 旧文件 Old.ts 累计两次提交，达到 60 行
+      {
+        commit: { oid: 'aaa', author: 'alice', timestamp: 1000, message: 'init Old' },
+        files: [{ path: 'src/Old.ts', additions: 50, deletions: 0 }],
+      },
+      {
+        commit: { oid: 'bbb', author: 'bob', timestamp: 2000, message: 'grow Old' },
+        files: [{ path: 'src/Old.ts', additions: 20, deletions: 10 }],
+      },
+      // 重命名：Old.ts => New.ts（带 renamedFrom 标记）
+      {
+        commit: { oid: 'ccc', author: 'alice', timestamp: 3000, message: 'rename Old to New' },
+        files: [{ path: 'src/New.ts', renamedFrom: 'src/Old.ts', additions: 0, deletions: 0 }],
+      },
+      // 新路径后续继续变更
+      {
+        commit: { oid: 'ddd', author: 'bob', timestamp: 4000, message: 'edit New' },
+        files: [{ path: 'src/New.ts', additions: 5, deletions: 2 }],
+      },
+    ]
+
+    const stocks = buildFileStocks(renameCommits, 'test')
+
+    // 旧路径不再作为独立股票出现
+    const oldStock = stocks.find(s => s.path === 'src/Old.ts')
+    expect(oldStock).toBeUndefined()
+
+    // 新路径继承了全部历史（4 根 candle，含重命名前的 2 根）
+    const newStock = stocks.find(s => s.path === 'src/New.ts')
+    expect(newStock).toBeDefined()
+    expect(newStock.candles.length).toBe(4)
+    // 行数：50 → 60 → 60（rename 0/0）→ 63
+    expect(newStock.currentLines).toBe(63)
+    // 首根 candle 应是 Old.ts 的 IPO
+    expect(newStock.firstCommit.oid).toBe('aaa')
+  })
+
+  it('重命名前旧路径不存在时安全降级（直接作为新 IPO）', () => {
+    const commits = [
+      {
+        commit: { oid: 'aaa', author: 'alice', timestamp: 1000, message: 'rename unknown' },
+        files: [{ path: 'src/New.ts', renamedFrom: 'src/NeverExisted.ts', additions: 0, deletions: 0 }],
+      },
+    ]
+    const stocks = buildFileStocks(commits, 'test')
+    const newStock = stocks.find(s => s.path === 'src/New.ts')
+    expect(newStock).toBeDefined()
+    expect(newStock.candles.length).toBe(1)
+    expect(newStock.currentLines).toBe(0)
+  })
 })
 
 describe('generateRepoId', () => {

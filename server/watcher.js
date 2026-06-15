@@ -1,4 +1,8 @@
 import { runGit } from './git-utils.js'
+import { parseNumstatLine, parseNumstat } from './lib/numstat-parser.js'
+import { createTaggedLogger } from './lib/logger.js'
+
+const logger = createTaggedLogger('Watcher')
 
 // 轮询间隔（毫秒）
 const POLL_INTERVAL = 5000
@@ -52,13 +56,18 @@ async function getCommitWithDiff(repoPath, hash) {
         timestamp: parseInt(timestamp)
       }
     } else {
-      const parts = line.split('\t')
-      if (parts.length < 3) continue
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
-      const path = parts[2]
-      if (parts[0] === '-' && parts[1] === '-') continue
-      files.push({ path, additions, deletions })
+      const parsed = parseNumstatLine(line)
+      if (!parsed) continue
+      if (parsed.isBinary) {
+        logger.debug('skipped binary', { path: parsed.path, commit: commitHash?.slice(0, 8) })
+        continue
+      }
+      files.push({
+        path: parsed.path,
+        renamedFrom: parsed.renamedFrom,
+        additions: parsed.additions,
+        deletions: parsed.deletions,
+      })
     }
   }
 
@@ -70,30 +79,13 @@ async function getCommitWithDiff(repoPath, hash) {
     } else {
       numstat = await runGit(repoPath, ['diff-tree', '--numstat', '-r', parentHash, hash])
     }
-    files = parseNumstat(numstat)
+    files = parseNumstat(numstat).filter(f => !f.isBinary)
   }
 
   return {
     commit: currentCommit,
     files
   }
-}
-
-/**
- * 解析 numstat 输出
- */
-function parseNumstat(output) {
-  const files = []
-  for (const line of output.split('\n').filter(Boolean)) {
-    const parts = line.split('\t')
-    if (parts.length < 3) continue
-    const additions = parts[0] === '-' ? 0 : parseInt(parts[0])
-    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1])
-    const path = parts[2]
-    if (parts[0] === '-' && parts[1] === '-') continue
-    files.push({ path, additions, deletions })
-  }
-  return files
 }
 
 /**

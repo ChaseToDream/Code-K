@@ -67,6 +67,63 @@ describe('createCandle', () => {
     expect(candle.high).toBe(100)
     expect(candle.low).toBe(0)
   })
+
+  describe('带 additions/deletions 的影线（波动幅度语义）', () => {
+    it('纯增：high = open + additions，low = open', () => {
+      // open=100, close=150（净增 50）；additions=60, deletions=10
+      const candle = createCandle(100, 150, 70, mockCommit, { additions: 60, deletions: 10 })
+      expect(candle.high).toBe(160) // 100 + 60
+      expect(candle.low).toBe(90)   // max(0, 100 - 10) = 90
+      expect(candle.close).toBe(150)
+    })
+
+    it('纯删：low = open - deletions，high = open', () => {
+      // open=200, close=150（净删 50）；additions=0, deletions=50
+      const candle = createCandle(200, 150, 50, mockCommit, { additions: 0, deletions: 50 })
+      expect(candle.high).toBe(200) // max(200 + 0, 150) = 200
+      expect(candle.low).toBe(150)  // min(max(0, 200-50), 150) = min(150, 150) = 150
+    })
+
+    it('先删后加（low 下探到 0 边界）', () => {
+      // open=10, deletions=20 → 理论谷底 max(0, 10-20)=0；close=30
+      const candle = createCandle(10, 30, 50, mockCommit, { additions: 40, deletions: 20 })
+      expect(candle.low).toBe(0)    // 被下界 0 截断
+      expect(candle.high).toBe(50)  // 10 + 40
+    })
+
+    it('additions=0 且 deletions=0：影线退化为实体端点（与旧逻辑一致）', () => {
+      const candle = createCandle(100, 100, 0, mockCommit, { additions: 0, deletions: 0 })
+      expect(candle.high).toBe(100)
+      expect(candle.low).toBe(100)
+    })
+
+    it('不变量：high >= max(open, close) >= min(open, close) >= low >= 0', () => {
+      const cases = [
+        { open: 100, close: 150, additions: 60, deletions: 10 },
+        { open: 200, close: 50, additions: 5, deletions: 155 },
+        { open: 10, close: 30, additions: 40, deletions: 20 },
+        { open: 0, close: 100, additions: 100, deletions: 0 },
+        { open: 50, close: 0, additions: 0, deletions: 50 },
+      ]
+      for (const c of cases) {
+        const candle = createCandle(c.open, c.close, c.additions + c.deletions, mockCommit, {
+          additions: c.additions,
+          deletions: c.deletions,
+        })
+        const bodyHigh = Math.max(c.open, c.close)
+        const bodyLow = Math.min(c.open, c.close)
+        expect(candle.high).toBeGreaterThanOrEqual(bodyHigh)
+        expect(bodyLow).toBeGreaterThanOrEqual(candle.low)
+        expect(candle.low).toBeGreaterThanOrEqual(0)
+      }
+    })
+  })
+
+  it('不传 options 时保持向后兼容（影线长度为 0）', () => {
+    const candle = createCandle(100, 150, 50, mockCommit)
+    expect(candle.high).toBe(150) // max(open, close)
+    expect(candle.low).toBe(100)  // min(open, close)
+  })
 })
 
 describe('calcChangePercent', () => {

@@ -26,6 +26,16 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
     const { commit, files } = diff;
 
     for (const file of files) {
+      // 重命名：把旧路径的 state 迁移到新路径（与 server/services/parser.js 保持一致）
+      if (file.renamedFrom && file.path !== file.renamedFrom) {
+        const oldState = fileData.get(file.renamedFrom);
+        if (oldState) {
+          fileData.delete(file.renamedFrom);
+          oldState.path = file.path;
+          fileData.set(file.path, oldState);
+        }
+      }
+
       let state = fileData.get(file.path);
 
       if (!state) {
@@ -45,7 +55,12 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
 
         const open = 0;
         const close = Math.max(0, linesAfter);
-        state.candles.push(createCandle(open, close, file.additions + file.deletions, commit));
+        state.candles.push(
+          createCandle(open, close, file.additions + file.deletions, commit, {
+            additions: file.additions,
+            deletions: file.deletions,
+          }),
+        );
         state.currentLines = close;
         state.totalAdditions += file.additions;
         state.totalDeletions += file.deletions;
@@ -55,7 +70,12 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
         const change = file.additions - file.deletions;
         const close = Math.max(0, open + change);
 
-        state.candles.push(createCandle(open, close, file.additions + file.deletions, commit));
+        state.candles.push(
+          createCandle(open, close, file.additions + file.deletions, commit, {
+            additions: file.additions,
+            deletions: file.deletions,
+          }),
+        );
         state.currentLines = close;
         state.totalAdditions += file.additions;
         state.totalDeletions += file.deletions;
