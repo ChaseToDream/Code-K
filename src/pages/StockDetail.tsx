@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useRepo } from '../hooks/useRepo'
 import KlineChart from '../components/KlineChart'
+import type { IndicatorConfig } from '../components/KlineChart'
 import DiffViewer from '../components/DiffViewer'
 import FileTree from '../components/FileTree'
 import { exportChartToPNG, exportStockDetails } from '../lib/export'
@@ -20,6 +21,32 @@ export default function StockDetail() {
   const [showFileTree, setShowFileTree] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const chartContainerRef = useRef<HTMLDivElement>(null)
+  const [indicators, setIndicators] = useState<IndicatorConfig>({
+    ma: { enabled: true, periods: [5, 10, 20] },
+    boll: false,
+    macd: false,
+    rsi: false,
+  })
+
+  const toggleMA = useCallback((period: number) => {
+    setIndicators(prev => {
+      const periods = prev.ma.periods.includes(period)
+        ? prev.ma.periods.filter(p => p !== period)
+        : [...prev.ma.periods, period].sort((a, b) => a - b)
+      return { ...prev, ma: { enabled: periods.length > 0, periods } }
+    })
+  }, [])
+
+  const toggleIndicator = useCallback((key: 'boll' | 'macd' | 'rsi') => {
+    setIndicators(prev => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
+  const maColors: Record<number, string> = {
+    5: '#fbbf24',
+    10: '#3b82f6',
+    20: '#a855f7',
+    60: '#f97316',
+  }
 
   const isParsing = activeRepo?.status === 'parsing'
 
@@ -201,9 +228,115 @@ export default function StockDetail() {
               </button>
             </div>
           </div>
-          <div ref={chartContainerRef}>
-            <KlineChart stock={stock} />
+
+          {/* Indicator Toolbar */}
+          <div className="flex items-center gap-1 mb-3 flex-wrap">
+            <span className="text-[10px] font-mono text-ex-dim mr-2 uppercase tracking-wider">Indicators:</span>
+            {/* MA Buttons */}
+            {[5, 10, 20, 60].map(period => {
+              const active = indicators.ma.periods.includes(period) && indicators.ma.enabled
+              return (
+                <button
+                  key={period}
+                  onClick={() => toggleMA(period)}
+                  className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-all cursor-pointer
+                    ${active
+                      ? 'border-current bg-current/10'
+                      : 'border-ex-border bg-ex-panel text-ex-dim hover:text-ex-text'
+                    }`}
+                  style={active ? { color: maColors[period], borderColor: maColors[period] } : {}}
+                >
+                  MA{period}
+                </button>
+              )
+            })}
+            <div className="w-px h-4 bg-ex-border mx-1" />
+            {/* BOLL Button */}
+            <button
+              onClick={() => toggleIndicator('boll')}
+              className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-all cursor-pointer
+                ${indicators.boll
+                  ? 'border-pink-500 bg-pink-500/10 text-pink-400'
+                  : 'border-ex-border bg-ex-panel text-ex-dim hover:text-ex-text'
+                }`}
+            >
+              BOLL
+            </button>
+            {/* MACD Button */}
+            <button
+              onClick={() => toggleIndicator('macd')}
+              className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-all cursor-pointer
+                ${indicators.macd
+                  ? 'border-blue-500 bg-blue-500/10 text-blue-400'
+                  : 'border-ex-border bg-ex-panel text-ex-dim hover:text-ex-text'
+                }`}
+            >
+              MACD
+            </button>
+            {/* RSI Button */}
+            <button
+              onClick={() => toggleIndicator('rsi')}
+              className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-all cursor-pointer
+                ${indicators.rsi
+                  ? 'border-purple-500 bg-purple-500/10 text-purple-400'
+                  : 'border-ex-border bg-ex-panel text-ex-dim hover:text-ex-text'
+                }`}
+            >
+              RSI
+            </button>
           </div>
+
+          {/* Legend */}
+          {(indicators.ma.enabled || indicators.boll || indicators.macd || indicators.rsi) && (
+            <div className="flex items-center gap-3 mb-2 text-[10px] font-mono flex-wrap">
+              {indicators.ma.enabled && indicators.ma.periods.map(p => (
+                <span key={p} className="flex items-center gap-1">
+                  <span className="w-3 h-0.5 rounded" style={{ backgroundColor: maColors[p] }} />
+                  <span style={{ color: maColors[p] }}>MA{p}</span>
+                </span>
+              ))}
+              {indicators.boll && (
+                <span className="flex items-center gap-1 text-pink-400">
+                  <span className="w-3 h-0.5 rounded bg-pink-400" />
+                  BOLL(20,2)
+                </span>
+              )}
+              {indicators.macd && (
+                <>
+                  <span className="flex items-center gap-1 text-blue-400">
+                    <span className="w-3 h-0.5 rounded bg-blue-400" />
+                    MACD
+                  </span>
+                  <span className="flex items-center gap-1 text-orange-400">
+                    <span className="w-3 h-0.5 rounded bg-orange-400" />
+                    SIGNAL
+                  </span>
+                </>
+              )}
+              {indicators.rsi && (
+                <span className="flex items-center gap-1 text-purple-400">
+                  <span className="w-3 h-0.5 rounded bg-purple-400" />
+                  RSI(14)
+                </span>
+              )}
+            </div>
+          )}
+
+          <div ref={chartContainerRef}>
+            <KlineChart stock={stock} indicators={indicators} />
+          </div>
+
+          {/* Indicator Info Tooltips */}
+          {(indicators.macd || indicators.rsi) && (
+            <div className="mt-2 flex items-center gap-4 text-[9px] font-mono text-ex-dim">
+              {indicators.macd && (
+                <span>MACD(12,26,9): 蓝线=DIF, 橙线=DEA, 柱=MACD柱</span>
+              )}
+              {indicators.rsi && (
+                <span>RSI(14): 虚线 70=超买, 30=超卖</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Diff Viewer */}
