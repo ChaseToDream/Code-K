@@ -1,0 +1,97 @@
+{
+  "repoName": "bbb",
+  "repoPath": "/tmp/codek-bbb-xJmA2j",
+  "lastHead": "d67e86bf6e83b6241d14ede3a65032e3c4e715c0",
+  "stocks": [
+    {
+      "path": "a.txt",
+      "ticker": "A.TXT",
+      "candles": [
+        {
+          "time": 1788662838,
+          "open": 0,
+          "high": 2,
+          "low": 0,
+          "close": 2,
+          "volume": 2,
+          "commitMessage": "init",
+          "commitHash": "134e4b96",
+          "author": "T",
+          "additions": 2,
+          "deletions": 0
+        },
+        {
+          "time": 1788662838,
+          "open": 2,
+          "high": 4,
+          "low": 2,
+          "close": 4,
+          "volume": 2,
+          "commitMessage": "grow a",
+          "commitHash": "d67e86bf",
+          "author": "T",
+          "additions": 2,
+          "deletions": 0
+        }
+      ],
+      "currentLines": 4,
+      "status": "active",
+      "firstCommit": {
+        "oid": "134e4b96",
+        "message": "init",
+        "author": "T",
+        "timestamp": 1788662838
+      },
+      "lastCommit": {
+        "oid": "d67e86bf",
+        "message": "grow a",
+        "author": "T",
+        "timestamp": 1788662838
+      },
+      "totalAdditions": 4,
+      "totalDeletions": 0,
+      "changePercent": 100,
+      "repoId": "L3RtcC9jb2Rlay1iYmIteEptQTJq"
+    },
+    {
+      "path": "src/b.js",
+      "ticker": "B.JS",
+      "candles": [
+        {
+          "time": 1788662838,
+          "open": 0,
+          "high": 1,
+          "low": 0,
+          "close": 1,
+          "volume": 1,
+          "commitMessage": "init",
+          "commitHash": "134e4b96",
+          "author": "T",
+          "additions": 1,
+          "deletions": 0
+        }
+      ],
+      "currentLines": 1,
+      "status": "ipo",
+      "firstCommit": {
+        "oid": "134e4b96",
+        "message": "init",
+        "author": "T",
+        "timestamp": 1788662838
+      },
+      "lastCommit": {
+        "oid": "134e4b96",
+        "message": "init",
+        "author": "T",
+        "timestamp": 1788662838
+      },
+      "totalAdditions": 1,
+      "totalDeletions": 0,
+      "changePercent": 100,
+      "repoId": "L3RtcC9jb2Rlay1iYmIteEptQTJq"
+    }
+  ],
+  "commitCount": 2,
+  "schemaVersion": 3,
+  "timestamp": 1788662840182
+}

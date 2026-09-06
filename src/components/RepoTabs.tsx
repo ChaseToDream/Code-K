@@ -8,10 +8,10 @@ interface RepoTabsProps {
 }
 
 export default function RepoTabs({ repos, activeRepoId, onRepoSelect, onRepoClose }: RepoTabsProps) {
-  if (repos.length <= 1) return null;
+  if (repos.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 overflow-x-auto pb-2">
+    <div className="flex items-center gap-2 overflow-x-auto pb-2" role="tablist" aria-label="仓库标签">
       {repos.map((repo) => {
         const isActive = repo.id === activeRepoId;
         const isParsing = repo.status === 'parsing';
@@ -22,7 +22,10 @@ export default function RepoTabs({ repos, activeRepoId, onRepoSelect, onRepoClos
           : 0;
 
         return (
-          <div
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isActive}
             key={repo.id}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all
               ${isActive
@@ -57,19 +60,29 @@ export default function RepoTabs({ repos, activeRepoId, onRepoSelect, onRepoClos
             ) : null}
 
             {/* 关闭按钮 */}
-            <button
+            <span
+              role="button"
+              tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
                 onRepoClose(repo.id);
               }}
-              className="ml-1 text-ex-dim hover:text-ex-red transition-colors p-0.5"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onRepoClose(repo.id);
+                }
+              }}
+              className="ml-1 text-ex-dim hover:text-ex-red transition-colors p-0.5 cursor-pointer"
               title="关闭仓库"
+              aria-label={`关闭仓库 ${repo.name}`}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
-            </button>
-          </div>
+            </span>
+          </button>
         );
       })}
     </div>

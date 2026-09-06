@@ -4,8 +4,8 @@
 import { createServer } from 'node:http'
 import { WebSocketServer } from 'ws'
 import { cleanupAllWatchers } from './watcher.js'
-import { handleDiscover, handleResolve } from './routes/discover.js'
-import { handleGetLog, handleGetDiff, validateRepoPath } from './routes/repo.js'
+import { handleDiscover } from './routes/discover.js'
+import { handleGetLog, validateRepoPath } from './routes/repo.js'
 import { setupWebSocket } from './ws-handler.js'
 import { deleteCache, clearAllCache, getCacheStats } from './services/cache.js'
 import { generateRepoId } from './lib/kline-core.js'
@@ -24,11 +24,6 @@ const server = createServer(async (req, res) => {
     // /api/discover — 不需要 path 参数
     if (req.method === 'GET' && url.pathname === '/api/discover') {
       return await handleDiscover(req, res)
-    }
-
-    // /api/resolve?name=<folder_name> — 按文件夹名搜索
-    if (req.method === 'GET' && url.pathname === '/api/resolve') {
-      return await handleResolve(req, res)
     }
 
     // /api/cache/stats — 缓存统计
@@ -56,8 +51,6 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && (url.pathname === '/api/repos' || url.pathname === '/api/log')) {
       await handleGetLog(req, res, repoPath)
-    } else if (req.method === 'GET' && url.pathname === '/api/diff') {
-      await handleGetDiff(req, res, repoPath)
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Not found' }))

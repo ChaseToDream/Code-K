@@ -4,7 +4,8 @@ import type { FileStock } from '../lib/types'
 
 interface FileTreeProps {
   stocks: FileStock[]
-  onStockSelect: (stock: FileStock) => void
+  /** 当前查看的文件路径，对应行高亮 */
+  activePath?: string
 }
 
 interface TreeNode {
@@ -65,22 +66,24 @@ function FolderNode({
   node,
   depth,
   expandedFolders,
+  activePath,
   onToggle,
-  onStockSelect,
 }: {
   node: TreeNode
   depth: number
   expandedFolders: Set<string>
+  activePath?: string
   onToggle: (path: string) => void
-  onStockSelect: (stock: FileStock) => void
 }) {
   const isExpanded = expandedFolders.has(node.path)
   const hasChildren = node.children.length > 0
 
   return (
     <div>
-      <div
-        className="flex items-center gap-1 py-1 px-2 hover:bg-ex-panel/50 cursor-pointer transition-colors"
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        className="w-full text-left flex items-center gap-1 py-1 px-2 hover:bg-ex-panel/50 cursor-pointer transition-colors"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={() => onToggle(node.path)}
       >
@@ -91,7 +94,7 @@ function FolderNode({
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
-          className={`text-ex-dim transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+          className={`text-ex-dim transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
         >
           <path d="M9 18l6-6-6-6" />
         </svg>
@@ -102,17 +105,19 @@ function FolderNode({
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={isExpanded ? 'text-ex-accent' : 'text-ex-gold'}
+          className={`shrink-0 ${isExpanded ? 'text-ex-accent' : 'text-ex-gold'}`}
         >
           {isExpanded ? (
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            // 展开的文件夹
+            <path d="M3.75 9.78c.112-.018.227-.028.344-.028h15.812c.117 0 .232.01.344.028m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.78" />
           ) : (
+            // 折叠的文件夹
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           )}
         </svg>
         <span className="text-sm font-mono text-ex-heading truncate">{node.name}</span>
         <span className="text-xs text-ex-dim ml-auto">{node.children.length}</span>
-      </div>
+      </button>
       {isExpanded && hasChildren && (
         <div>
           {node.children.map((child) => (
@@ -121,8 +126,8 @@ function FolderNode({
               node={child}
               depth={depth + 1}
               expandedFolders={expandedFolders}
+              activePath={activePath}
               onToggle={onToggle}
-              onStockSelect={onStockSelect}
             />
           ))}
         </div>
@@ -134,22 +139,24 @@ function FolderNode({
 function FileNode({
   node,
   depth,
-  onStockSelect,
+  activePath,
 }: {
   node: TreeNode
   depth: number
-  onStockSelect: (stock: FileStock) => void
+  activePath?: string
 }) {
   const stock = node.stock
   if (!stock) return null
 
   const isUp = stock.changePercent >= 0
+  const isActive = activePath === node.path
 
   return (
     <Link
       to={`/stock/${encodeURIComponent(stock.path)}`}
-      onClick={() => onStockSelect(stock)}
-      className="flex items-center gap-2 py-1 px-2 hover:bg-ex-panel/50 transition-colors no-underline"
+      aria-current={isActive ? 'page' : undefined}
+      className={`flex items-center gap-2 py-1 px-2 transition-colors no-underline
+        ${isActive ? 'bg-ex-accent/10' : 'hover:bg-ex-panel/50'}`}
       style={{ paddingLeft: `${depth * 16 + 24}px` }}
     >
       <svg
@@ -177,14 +184,14 @@ function TreeNodeComponent({
   node,
   depth,
   expandedFolders,
+  activePath,
   onToggle,
-  onStockSelect,
 }: {
   node: TreeNode
   depth: number
   expandedFolders: Set<string>
+  activePath?: string
   onToggle: (path: string) => void
-  onStockSelect: (stock: FileStock) => void
 }) {
   if (node.type === 'folder') {
     return (
@@ -192,15 +199,15 @@ function TreeNodeComponent({
         node={node}
         depth={depth}
         expandedFolders={expandedFolders}
+        activePath={activePath}
         onToggle={onToggle}
-        onStockSelect={onStockSelect}
       />
     )
   }
-  return <FileNode node={node} depth={depth} onStockSelect={onStockSelect} />
+  return <FileNode node={node} depth={depth} activePath={activePath} />
 }
 
-export default function FileTree({ stocks, onStockSelect }: FileTreeProps) {
+export default function FileTree({ stocks, activePath }: FileTreeProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
   const tree = useMemo(() => buildTree(stocks), [stocks])
@@ -278,8 +285,8 @@ export default function FileTree({ stocks, onStockSelect }: FileTreeProps) {
             node={node}
             depth={0}
             expandedFolders={expandedFolders}
+            activePath={activePath}
             onToggle={handleToggle}
-            onStockSelect={onStockSelect}
           />
         ))}
       </div>

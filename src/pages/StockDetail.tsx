@@ -1,15 +1,39 @@
-import { useMemo, useState, useCallback, useRef } from 'react'
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import type { IChartApi } from 'lightweight-charts'
 import { useRepo } from '../hooks/useRepo'
+import { useWebSocket } from '../hooks/useWebSocket'
 import KlineChart from '../components/KlineChart'
 import DiffViewer from '../components/DiffViewer'
 import FileTree from '../components/FileTree'
-import { exportChartToPNG, exportStockDetails } from '../lib/export'
+import ErrorBoundary from '../components/ErrorBoundary'
+import { ChartSkeleton } from '../components/Skeleton'
+import { exportChartAsPNG, exportStockDetails } from '../lib/export'
+
+interface RemoteDiffState {
+  commitHash: string
+  filePath: string
+  oldContent: string | null
+  newContent: string | null
+  additions: number
+  deletions: number
+  isBinary?: boolean
+}
+
+// YY/MM/DD 短日期格式
+function formatShortDate(timestamp: number): string {
+  const d = new Date(timestamp * 1000)
+  const yy = String(d.getFullYear()).slice(2)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yy}/${mm}/${dd}`
+}
 
 export default function StockDetail() {
   const { path } = useParams<{ path: string }>()
   const decodedPath = decodeURIComponent(path || '')
-  const { activeRepo, selectStock, refreshRepo } = useRepo()
+  const { activeRepo, activeRepoId, refreshRepo } = useRepo()
+  const { sendRequestDiff, onDiffDetail } = useWebSocket()
 
   const stock = useMemo(
     () => activeRepo?.stocks.find(s => s.path === decodedPath),
@@ -19,23 +43,90 @@ export default function StockDetail() {
   const [selectedCandle, setSelectedCandle] = useState<number | null>(null)
   const [showFileTree, setShowFileTree] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const [chartApi, setChartApi] = useState<IChartApi | null>(null)
+  const [remoteDiff, setRemoteDiff] = useState<RemoteDiffState | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [diffError, setDiffError] = useState<string | null>(null)
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 当前等待响应的 diff 请求（后端模式），用 ref 供订阅回调读取
+  const pendingDiffRef = useRef<{ commitHash: string; filePath: string } | null>(null)
 
   const isParsing = activeRepo?.status === 'parsing'
 
+  // 订阅后端 diff 响应：只接收当前 pending 的 commitHash + filePath
+  useEffect(() => {
+    const unsubscribe = onDiffDetail((detail) => {
+      const pending = pendingDiffRef.current
+      if (!pending) return
+      if (detail.commitHash !== pending.commitHash || detail.filePath !== pending.filePath) return
+
+      pendingDiffRef.current = null
+      setDiffLoading(false)
+      if (detail.error) {
+        setDiffError(detail.error)
+        setRemoteDiff(null)
+      } else {
+        setDiffError(null)
+        setRemoteDiff({
+          commitHash: detail.commitHash,
+          filePath: detail.filePath,
+          oldContent: detail.oldContent,
+          newContent: detail.newContent,
+          additions: detail.additions,
+          deletions: detail.deletions,
+          isBinary: detail.isBinary,
+        })
+      }
+    })
+    return unsubscribe
+  }, [onDiffDetail])
+
+  // 组件卸载时清理刷新锁定定时器
+  useEffect(() => {
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current)
+    }
+  }, [])
+
   const handleRefresh = () => {
-    if (!activeRepo || isParsing || isRefreshing) return
+    if (!activeRepoId || isParsing || isRefreshing) return
     setIsRefreshing(true)
-    refreshRepo(activeRepo.path, activeRepo.name)
-    setTimeout(() => setIsRefreshing(false), 3000)
+    refreshRepo(activeRepoId)
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current)
+    refreshTimeoutRef.current = setTimeout(() => setIsRefreshing(false), 3000)
   }
 
-  const handleViewDiff = useCallback((candleIdx: number) => {
+  const resetDiffState = () => {
+    setRemoteDiff(null)
+    setDiffError(null)
+    setDiffLoading(false)
+    pendingDiffRef.current = null
+  }
+
+  const handleViewDiff = (candleIdx: number) => {
+    if (!stock || !activeRepo) return
+    const candle = stock.candles[candleIdx]
+    if (!candle) return
+
+    // 切换 commit 时重置旧 diff 状态
+    resetDiffState()
     setSelectedCandle(candleIdx)
-  }, [])
+
+    // 本地解析模式：candle 自带内容，直接渲染
+    if (candle.oldContent !== undefined) return
+
+    // 后端模式：通过 WebSocket 请求 diff 内容
+    setDiffLoading(true)
+    pendingDiffRef.current = { commitHash: candle.commitHash, filePath: stock.path }
+    sendRequestDiff(activeRepo.path, candle.commitHash, stock.path)
+  }
 
   const handleCloseDiff = useCallback(() => {
     setSelectedCandle(null)
+    setRemoteDiff(null)
+    setDiffError(null)
+    setDiffLoading(false)
+    pendingDiffRef.current = null
   }, [])
 
   const handleToggleFileTree = useCallback(() => {
@@ -43,10 +134,8 @@ export default function StockDetail() {
   }, [])
 
   const handleExportChart = useCallback(() => {
-    if (chartContainerRef.current) {
-      exportChartToPNG(chartContainerRef.current, `${stock?.ticker || 'chart'}.png`)
-    }
-  }, [stock])
+    exportChartAsPNG(chartApi, `${stock?.ticker || 'chart'}.png`)
+  }, [chartApi, stock])
 
   const handleExportDetails = useCallback(() => {
     if (stock) {
@@ -67,7 +156,22 @@ export default function StockDetail() {
     return { high: h, low: l }
   }, [stock])
 
+  // memo 化倒序提交历史（必须在 early return 之前调用）
+  const reversedCandles = useMemo(
+    () => (stock ? [...stock.candles].reverse() : []),
+    [stock]
+  )
+
   if (!stock) {
+    // 仓库仍在解析时显示骨架屏，而非"未找到"
+    if (activeRepo?.status === 'parsing') {
+      return (
+        <div className="h-full p-6 max-w-7xl mx-auto space-y-4">
+          <ChartSkeleton />
+          <p className="text-center text-ex-dim text-sm font-mono">正在解析仓库...</p>
+        </div>
+      )
+    }
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center space-y-4">
@@ -88,6 +192,8 @@ export default function StockDetail() {
   const lastDate = stock.lastCommit
     ? new Date(stock.lastCommit.timestamp * 1000).toLocaleDateString()
     : '-'
+  const firstDateShort = stock.firstCommit ? formatShortDate(stock.firstCommit.timestamp) : '-'
+  const lastDateShort = stock.lastCommit ? formatShortDate(stock.lastCommit.timestamp) : '-'
 
   const selectedCandleData = selectedCandle !== null ? stock.candles[selectedCandle] : null
 
@@ -99,7 +205,7 @@ export default function StockDetail() {
         <div className="flex items-start justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <Link to="/market" className="text-ex-dim hover:text-ex-text transition-colors no-underline">
+              <Link to="/market" aria-label="返回行情页" className="text-ex-dim hover:text-ex-text transition-colors no-underline">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M19 12H5M12 19l-7-7 7-7" />
                 </svg>
@@ -163,18 +269,18 @@ export default function StockDetail() {
         </div>
 
         {/* Stats Row */}
-        <div className="grid grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
           {[
             { label: 'OPEN', value: stock.candles[0]?.open.toLocaleString() || '0' },
             { label: 'HIGH', value: high.toLocaleString() },
             { label: 'LOW', value: low.toLocaleString() },
             { label: 'VOLUME', value: totalVolume.toLocaleString() },
             { label: 'TRADES', value: stock.candles.length.toString() },
-            { label: 'LISTED', value: `${firstDate} - ${lastDate}` },
+            { label: 'LISTED', value: `${firstDateShort} - ${lastDateShort}`, title: `${firstDate} - ${lastDate}` },
           ].map((stat) => (
             <div key={stat.label} className="bg-ex-surface border border-ex-border rounded-lg p-3">
               <div className="text-[10px] text-ex-dim font-mono mb-0.5">{stat.label}</div>
-              <div className="text-sm font-mono text-ex-heading">{stat.value}</div>
+              <div className="text-sm font-mono text-ex-heading truncate" title={stat.title}>{stat.value}</div>
             </div>
           ))}
         </div>
@@ -201,39 +307,56 @@ export default function StockDetail() {
               </button>
             </div>
           </div>
-          <div ref={chartContainerRef}>
-            <KlineChart stock={stock} />
-          </div>
+          <ErrorBoundary
+            fallback={
+              <div className="p-8 text-center">
+                <p className="text-ex-red text-sm font-mono">图表渲染失败</p>
+              </div>
+            }
+          >
+            <KlineChart stock={stock} onChartReady={setChartApi} />
+          </ErrorBoundary>
         </div>
 
         {/* Diff Viewer */}
         {selectedCandleData && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-mono text-ex-heading">
-                提交差异详情 - {selectedCandleData.commitHash}
-              </h3>
-              <button
-                onClick={handleCloseDiff}
-                className="text-ex-dim hover:text-ex-red transition-colors text-sm font-mono cursor-pointer"
-              >
-                关闭
-              </button>
-            </div>
-            {selectedCandleData.oldContent !== undefined && selectedCandleData.newContent !== undefined ? (
+            <h3 className="text-sm font-mono text-ex-heading">
+              提交差异详情 - {selectedCandleData.commitHash}
+            </h3>
+            {diffError ? (
+              <div className="bg-ex-red/10 border border-ex-red/30 rounded-lg px-4 py-3 text-ex-red text-sm font-mono">
+                {diffError}
+              </div>
+            ) : selectedCandleData.oldContent !== undefined ? (
+              // 本地解析模式：candle 自带内容
               <DiffViewer
-                oldContent={selectedCandleData.oldContent}
-                newContent={selectedCandleData.newContent}
-                filePath={stock.path}
-                additions={Math.max(0, selectedCandleData.close - selectedCandleData.open)}
-                deletions={Math.max(0, selectedCandleData.open - selectedCandleData.close)}
+                fileName={stock.path}
+                commitHash={selectedCandleData.commitHash}
+                oldContent={selectedCandleData.oldContent ?? null}
+                newContent={selectedCandleData.newContent ?? null}
+                additions={selectedCandleData.additions}
+                deletions={selectedCandleData.deletions}
                 onClose={handleCloseDiff}
               />
-            ) : (
+            ) : diffLoading ? (
+              // 后端模式：等待 WebSocket 返回 diff 内容
               <div className="bg-ex-surface border border-ex-border rounded-lg p-8 text-center">
-                <p className="text-ex-dim text-sm font-mono">此提交没有文件内容数据</p>
+                <p className="text-ex-dim text-sm font-mono">加载 diff...</p>
               </div>
-            )}
+            ) : remoteDiff && remoteDiff.commitHash === selectedCandleData.commitHash ? (
+              // 后端模式：响应已到达
+              <DiffViewer
+                fileName={stock.path}
+                commitHash={selectedCandleData.commitHash}
+                oldContent={remoteDiff.oldContent}
+                newContent={remoteDiff.newContent}
+                additions={remoteDiff.additions}
+                deletions={remoteDiff.deletions}
+                isBinary={remoteDiff.isBinary}
+                onClose={handleCloseDiff}
+              />
+            ) : null}
           </div>
         )}
 
@@ -243,7 +366,7 @@ export default function StockDetail() {
             <span className="text-xs font-mono text-ex-dim uppercase">Recent Trades (Commits)</span>
           </div>
           <div className="divide-y divide-ex-border/50 max-h-80 overflow-y-auto">
-            {[...stock.candles].reverse().map((candle, i) => {
+            {reversedCandles.map((candle, i) => {
               const candleUp = candle.close >= candle.open
               const originalIdx = stock.candles.length - 1 - i
               const isSelected = selectedCandle === originalIdx
@@ -268,8 +391,10 @@ export default function StockDetail() {
                     <div className="text-ex-heading">
                       {candle.open} &rarr; {candle.close}
                     </div>
-                    <div className={candleUp ? 'text-ex-green' : 'text-ex-red'}>
-                      {candleUp ? '+' : ''}{candle.close - candle.open} ({candle.volume} vol)
+                    <div>
+                      <span className="text-ex-green">+{candle.additions}</span>{' '}
+                      <span className="text-ex-red">-{candle.deletions}</span>{' '}
+                      <span className="text-ex-dim">({candle.volume} vol)</span>
                     </div>
                   </div>
                 </div>
@@ -282,7 +407,7 @@ export default function StockDetail() {
       {/* File Tree Sidebar */}
       {showFileTree && activeRepo && (
         <div className="w-80 border-l border-ex-border p-4 overflow-auto">
-          <FileTree stocks={activeRepo.stocks} onStockSelect={selectStock} />
+          <FileTree stocks={activeRepo.stocks} activePath={stock.path} />
         </div>
       )}
     </div>

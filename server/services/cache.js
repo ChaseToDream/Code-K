@@ -1,7 +1,7 @@
 /**
  * 磁盘缓存管理 — 持久化解析结果避免重复解析
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runGit } from '../git-utils.js'
@@ -11,7 +11,7 @@ import { runGit } from '../git-utils.js'
  * 旧版本缓存会被自动视为未命中，触发重新解析，避免展示陈旧数据。
  * 需与前端 src/lib/cache.ts 的 CACHE_SCHEMA_VERSION 保持一致。
  */
-export const CACHE_SCHEMA_VERSION = 2
+export const CACHE_SCHEMA_VERSION = 3
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CACHE_DIR = join(__dirname, '..', 'cache')
@@ -129,14 +129,14 @@ export function clearAllCache() {
 }
 
 /**
- * 获取缓存统计
+ * 获取缓存统计（totalSize 为字节数）
  */
 export function getCacheStats() {
   try {
     const files = readdirSync(CACHE_DIR).filter(f => f.endsWith('.json'))
     let totalSize = 0
     for (const file of files) {
-      totalSize += readFileSync(join(CACHE_DIR, file)).length
+      totalSize += statSync(join(CACHE_DIR, file)).size
     }
     return { count: files.length, totalSize }
   } catch {

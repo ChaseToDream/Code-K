@@ -1,24 +1,65 @@
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { SHORTCUTS } from '../hooks/useShortcuts'
+
+function isEditableTarget(target: HTMLElement): boolean {
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable
+  )
+}
 
 export default function ShortcutsHelp() {
   const [isOpen, setIsOpen] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const prevFocusRef = useRef<HTMLElement | null>(null)
 
-  const handleToggle = useCallback(() => {
-    setIsOpen(prev => !prev)
+  // 自注册 '?'（Shift+/）切换开关；输入框聚焦时不触发
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey) return
+      if (isEditableTarget(e.target as HTMLElement)) return
+      e.preventDefault()
+      setIsOpen(prev => !prev)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleClose = useCallback(() => {
-    setIsOpen(false)
-  }, [])
+  // 弹窗打开时 Esc 关闭：capture 阶段拦截并阻止冒泡到 Layout 触发页面导航
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [isOpen])
+
+  // 焦点管理：打开时焦点移入面板，关闭时还原焦点
+  useEffect(() => {
+    if (isOpen) {
+      prevFocusRef.current = document.activeElement as HTMLElement | null
+      panelRef.current?.focus()
+    } else if (prevFocusRef.current) {
+      prevFocusRef.current.focus?.()
+      prevFocusRef.current = null
+    }
+  }, [isOpen])
 
   if (!isOpen) {
     return (
       <button
-        onClick={handleToggle}
+        onClick={() => setIsOpen(true)}
         className="fixed bottom-4 right-4 w-10 h-10 bg-ex-surface border border-ex-border rounded-full
           flex items-center justify-center text-ex-dim hover:text-ex-text transition-colors cursor-pointer z-50"
         title="快捷键帮助 (?)"
+        aria-label="快捷键帮助"
       >
         <span className="text-sm font-mono">?</span>
       </button>
@@ -26,16 +67,22 @@ export default function ShortcutsHelp() {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={handleClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setIsOpen(false)}>
       <div
-        className="bg-ex-surface border border-ex-border rounded-lg p-6 max-w-md w-full mx-4"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="快捷键帮助"
+        tabIndex={-1}
+        className="bg-ex-surface border border-ex-border rounded-lg p-6 max-w-md w-full mx-4 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-mono font-semibold text-ex-heading">快捷键</h2>
           <button
-            onClick={handleClose}
+            onClick={() => setIsOpen(false)}
             className="text-ex-dim hover:text-ex-red transition-colors cursor-pointer"
+            aria-label="关闭快捷键帮助"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />

@@ -55,12 +55,7 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
 
         const open = 0;
         const close = Math.max(0, linesAfter);
-        state.candles.push(
-          createCandle(open, close, file.additions + file.deletions, commit, {
-            additions: file.additions,
-            deletions: file.deletions,
-          }),
-        );
+        state.candles.push(createCandle(commit, file, open, close));
         state.currentLines = close;
         state.totalAdditions += file.additions;
         state.totalDeletions += file.deletions;
@@ -70,12 +65,7 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
         const change = file.additions - file.deletions;
         const close = Math.max(0, open + change);
 
-        state.candles.push(
-          createCandle(open, close, file.additions + file.deletions, commit, {
-            additions: file.additions,
-            deletions: file.deletions,
-          }),
-        );
+        state.candles.push(createCandle(commit, file, open, close));
         state.currentLines = close;
         state.totalAdditions += file.additions;
         state.totalDeletions += file.deletions;
@@ -134,3 +124,31 @@ export function buildFileStocks(commits: CommitDiff[], repoId: string = ''): Fil
 
 // 别名，保持向后兼容
 export const buildFileStocksFromCommits = buildFileStocks;
+
+/**
+ * 兜底规范化：旧缓存（服务端磁盘缓存 / 旧版 IndexedDB）中的 candle 可能没有
+ * additions/deletions 字段，统一补 0，避免下游计算出现 undefined/NaN。
+ * 数据已完整时原样返回（不产生拷贝）。
+ */
+export function normalizeStocksCandles(stocks: FileStock[]): FileStock[] {
+  let dirty = false;
+  for (const stock of stocks) {
+    for (const candle of stock.candles) {
+      if ((candle.additions as number | undefined) === undefined || (candle.deletions as number | undefined) === undefined) {
+        dirty = true;
+        break;
+      }
+    }
+    if (dirty) break;
+  }
+  if (!dirty) return stocks;
+
+  return stocks.map(stock => ({
+    ...stock,
+    candles: stock.candles.map(candle => ({
+      ...candle,
+      additions: (candle.additions as number | undefined) ?? 0,
+      deletions: (candle.deletions as number | undefined) ?? 0,
+    })),
+  }));
+}

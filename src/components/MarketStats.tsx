@@ -6,17 +6,17 @@ interface MarketStatsProps {
 }
 
 /**
- * 根据涨跌比例计算市场情绪
+ * 根据涨跌比例计算市场情绪（等宽字体文字徽章，与终端风格一致）
  */
-function getSentiment(upCount: number, downCount: number): { label: string; emoji: string; color: string } {
+function getSentiment(upCount: number, downCount: number): { label: string; badge: string; badgeClass: string; labelColor: string } {
   const total = upCount + downCount
-  if (total === 0) return { label: '平静', emoji: '😐', color: 'text-ex-dim' }
+  if (total === 0) return { label: '平静', badge: '[CALM]', badgeClass: 'bg-ex-dim/15 text-ex-dim border-ex-dim/30', labelColor: 'text-ex-dim' }
 
   const upRatio = upCount / total
-  if (upRatio > 0.7) return { label: '狂热', emoji: '🚀', color: 'text-ex-green' }
-  if (upRatio > 0.5) return { label: '乐观', emoji: '😊', color: 'text-ex-green' }
-  if (upRatio > 0.3) return { label: '谨慎', emoji: '🤔', color: 'text-ex-gold' }
-  return { label: '恐慌', emoji: '😰', color: 'text-ex-red' }
+  if (upRatio > 0.7) return { label: '狂热', badge: '[STRONG]', badgeClass: 'bg-ex-green/15 text-ex-green border-ex-green/30', labelColor: 'text-ex-green' }
+  if (upRatio > 0.5) return { label: '乐观', badge: '[BULLISH]', badgeClass: 'bg-ex-green/15 text-ex-green border-ex-green/30', labelColor: 'text-ex-green' }
+  if (upRatio > 0.3) return { label: '谨慎', badge: '[NEUTRAL]', badgeClass: 'bg-ex-gold/15 text-ex-gold border-ex-gold/30', labelColor: 'text-ex-gold' }
+  return { label: '恐慌', badge: '[PANIC]', badgeClass: 'bg-ex-red/15 text-ex-red border-ex-red/30', labelColor: 'text-ex-red' }
 }
 
 /**
@@ -89,7 +89,7 @@ export default function MarketStats({ stats, sectors }: MarketStatsProps) {
           ) : (
             sectors.slice(0, 8).map((sector) => (
               <div key={sector.name} className="flex items-center gap-2">
-                <span className="text-xs font-mono text-ex-dim w-10 truncate">{sector.name}</span>
+                <span className="text-xs font-mono text-ex-dim w-20 truncate" title={sector.name}>{sector.name}</span>
                 <div className="flex-1 h-3 bg-ex-surface rounded overflow-hidden border border-ex-border">
                   <div
                     className={`h-full rounded transition-all ${
@@ -113,8 +113,10 @@ export default function MarketStats({ stats, sectors }: MarketStatsProps) {
       <div className="bg-ex-surface border border-ex-border rounded-lg p-4 space-y-3">
         <h3 className="text-xs font-mono text-ex-dim uppercase tracking-wider">市场情绪</h3>
         <div className="flex items-center gap-3">
-          <span className="text-2xl">{sentiment.emoji}</span>
-          <span className={`text-lg font-mono font-semibold ${sentiment.color}`}>{sentiment.label}</span>
+          <span className={`px-2 py-0.5 text-sm font-mono font-bold rounded border ${sentiment.badgeClass}`}>
+            {sentiment.badge}
+          </span>
+          <span className={`text-lg font-mono font-semibold ${sentiment.labelColor}`}>{sentiment.label}</span>
         </div>
 
         <div className="pt-2 border-t border-ex-border space-y-2">

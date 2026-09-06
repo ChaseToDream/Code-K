@@ -37,17 +37,16 @@ export async function getCommitsWithDiff(repoPath, limit = 300) {
   let renameCount = 0
 
   for (const line of logOutput.split('\n')) {
-    if (!line.trim()) {
-      if (currentCommit) {
-        commits.push({ commit: currentCommit, files: currentFiles })
-        currentCommit = null
-        currentFiles = []
-      }
-      continue
-    }
+    // git 输出结构为「格式行 -> 空行 -> numstat 行」（空行位于格式行与 numstat 之间），
+    // 因此空行只跳过不 flush；遇到新的 commit 元信息行时才结算上一个 commit。
+    if (!line.trim()) continue
 
     if (line.includes('\0')) {
-      // commit 元信息行
+      // commit 元信息行：结算上一个 commit
+      if (currentCommit) {
+        commits.push({ commit: currentCommit, files: currentFiles })
+        currentFiles = []
+      }
       const [hash, author, timestamp, message] = line.split('\0')
       currentCommit = {
         oid: hash,
@@ -149,12 +148,7 @@ export function buildFileStocks(commits, repoId) {
 
         const open = 0
         const close = Math.max(0, linesAfter)
-        state.candles.push(
-          createCandle(open, close, file.additions + file.deletions, commit, {
-            additions: file.additions,
-            deletions: file.deletions,
-          }),
-        )
+        state.candles.push(createCandle(commit, file, open, close))
         state.currentLines = close
         state.totalAdditions += file.additions
         state.totalDeletions += file.deletions
@@ -164,12 +158,7 @@ export function buildFileStocks(commits, repoId) {
         const change = file.additions - file.deletions
         const close = Math.max(0, open + change)
 
-        state.candles.push(
-          createCandle(open, close, file.additions + file.deletions, commit, {
-            additions: file.additions,
-            deletions: file.deletions,
-          }),
-        )
+        state.candles.push(createCandle(commit, file, open, close))
         state.currentLines = close
         state.totalAdditions += file.additions
         state.totalDeletions += file.deletions
@@ -224,4 +213,72 @@ export function buildFileStocks(commits, repoId) {
 
   stocks.sort((a, b) => b.currentLines - a.currentLines)
   return stocks
+}
+
+/**
+ * 将增量 commits 合并到现有 stocks 中（与前端 AppContext.tsx 的 applyCommitsToStocks 保持一致）
+ * 增量 commits 按时间正序排列（旧 -> 新），追加到已有 candle 序列末尾。
+ * 用于 watcher 推送 commits_update 后同步磁盘缓存，避免下次 start_parse 全量重解析。
+ *
+ * @param {Array} existingStocks - buildFileStocks 产出的股票列表（会被原地修改）
+ * @param {Array} newCommits - [{ commit, files }]，时间正序
+ * @param {string} repoId
+ * @returns {Array} 更新后的股票列表
+ */
+export function applyCommitsToStocks(existingStocks, newCommits, repoId) {
+  const stockMap = new Map(existingStocks.map(s => [s.path, s]))
+
+  for (const diff of newCommits) {
+    const { commit, files } = diff
+
+    for (const file of files) {
+      // 重命名：把旧路径的 stock 迁移到新路径（与 buildFileStocks 保持一致）
+      if (file.renamedFrom && file.path !== file.renamedFrom && stockMap.has(file.renamedFrom)) {
+        const oldStock = stockMap.get(file.renamedFrom)
+        stockMap.delete(file.renamedFrom)
+        oldStock.path = file.path
+        oldStock.ticker = generateTicker(file.path)
+        stockMap.set(file.path, oldStock)
+      }
+
+      let stock = stockMap.get(file.path)
+
+      if (!stock) {
+        // IPO：新文件首次出现
+        const open = 0
+        const close = Math.max(0, file.additions - file.deletions)
+        stock = {
+          path: file.path,
+          ticker: generateTicker(file.path),
+          candles: [createCandle(commit, file, open, close)],
+          currentLines: close,
+          status: 'ipo',
+          firstCommit: commit,
+          lastCommit: commit,
+          totalAdditions: file.additions,
+          totalDeletions: file.deletions,
+          changePercent: close > 0 ? 100 : 0,
+          repoId,
+        }
+        stockMap.set(file.path, stock)
+      } else {
+        // 已有文件追加 candle
+        const open = stock.currentLines
+        const change = file.additions - file.deletions
+        const close = Math.max(0, open + change)
+
+        stock.candles.push(createCandle(commit, file, open, close))
+        stock.currentLines = close
+        stock.totalAdditions += file.additions
+        stock.totalDeletions += file.deletions
+        stock.lastCommit = commit
+        stock.status = close === 0 && file.deletions > 0 ? 'delisted' : 'active'
+        stock.changePercent = calcChangePercent(stock.candles[stock.candles.length - 1])
+      }
+    }
+  }
+
+  const result = Array.from(stockMap.values())
+  result.sort((a, b) => b.currentLines - a.currentLines)
+  return result
 }

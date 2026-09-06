@@ -1,35 +1,56 @@
 import { useCallback, useRef } from 'react'
 import { useAppContext } from './useAppContext'
-import { buildFileStocks } from '../lib/kline-data'
+import { buildFileStocks, normalizeStocksCandles } from '../lib/kline-data'
 import { generateRepoId } from '../lib/kline-core'
 import { getCachedRepo, setCachedRepo, deleteCachedRepo, CACHE_SCHEMA_VERSION } from '../lib/cache'
-import type { CommitDiff } from '../lib/types'
+import type { CommitDiff, ParseProgress } from '../lib/types'
+
+/** git-core 产出的 ETA 单位为毫秒，统一转换为秒（与后端协议一致） */
+function normalizeProgress(progress: ParseProgress): ParseProgress {
+  if (progress.estimatedTimeRemaining === undefined) return progress
+  return {
+    ...progress,
+    estimatedTimeRemaining: Math.max(0, Math.round(progress.estimatedTimeRemaining / 1000)),
+  }
+}
+
+/** 写入 IndexedDB 前剥离每个 commit 每个 file 的全文内容，防止大仓库超配额 */
+function stripContentsForCache(commits: CommitDiff[]): CommitDiff[] {
+  return commits.map(diff => ({
+    ...diff,
+    files: diff.files.map(file => {
+      const stripped = { ...file }
+      delete stripped.oldContent
+      delete stripped.newContent
+      return stripped
+    }),
+  }))
+}
 
 export function useLocalParser() {
   const { dispatch } = useAppContext()
-  const workerRef = useRef<Worker | null>(null)
-  // 保存最近一次解析的 dirHandle，供刷新时复用
-  const lastDirHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
+  // 每个本地仓库一个 Worker（按 repoId 索引）
+  const workersRef = useRef(new Map<string, Worker>())
+  // 每个本地仓库的目录句柄（按 repoId 索引），供刷新时复用
+  const dirHandlesRef = useRef(new Map<string, FileSystemDirectoryHandle>())
 
   /**
    * 核心：用 Worker 解析本地仓库（跳过缓存，强制重新解析）
-   * 被首次解析与刷新复用
+   * 被首次解析与刷新复用；同一 repoId 重复调用时终止旧 Worker 重开
    */
   const runWorkerParse = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
     const repoName = dirHandle.name
     const repoId = generateRepoId(repoName)
 
-    // 终止之前的 Worker
-    if (workerRef.current) {
-      workerRef.current.terminate()
-    }
+    // 终止该仓库之前的 Worker
+    workersRef.current.get(repoId)?.terminate()
 
     // 创建新的 Worker
     const worker = new Worker(
       new URL('../lib/git-worker.ts', import.meta.url),
       { type: 'module' }
     )
-    workerRef.current = worker
+    workersRef.current.set(repoId, worker)
 
     const allCommits: CommitDiff[] = []
 
@@ -41,7 +62,7 @@ export function useLocalParser() {
           dispatch({
             type: 'UPDATE_REPO_PROGRESS',
             repoId,
-            progress,
+            progress: normalizeProgress(progress as ParseProgress),
           })
           break
 
@@ -72,13 +93,14 @@ export function useLocalParser() {
             })
 
             // 缓存解析结果（失败不影响主流程）
+            // commits 写入前剥离 oldContent/newContent 全文；candle 上的内容保留在内存不剥离
             try {
               await setCachedRepo({
                 id: repoId,
                 name: repoName,
                 path: repoName,
                 stocks: finalStocks,
-                commits: allCommits,
+                commits: stripContentsForCache(allCommits),
                 timestamp: Date.now(),
                 commitCount: allCommits.length,
                 schemaVersion: CACHE_SCHEMA_VERSION,
@@ -94,7 +116,7 @@ export function useLocalParser() {
             status: 'ready',
           })
           worker.terminate()
-          workerRef.current = null
+          workersRef.current.delete(repoId)
           break
 
         case 'error':
@@ -105,7 +127,7 @@ export function useLocalParser() {
             error: error || '解析失败',
           })
           worker.terminate()
-          workerRef.current = null
+          workersRef.current.delete(repoId)
           break
       }
     }
@@ -118,7 +140,7 @@ export function useLocalParser() {
         error: 'Worker 错误',
       })
       worker.terminate()
-      workerRef.current = null
+      workersRef.current.delete(repoId)
     }
 
     // 发送解析任务到 Worker
@@ -132,7 +154,7 @@ export function useLocalParser() {
   const parseLocalRepo = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
     const repoName = dirHandle.name
     const repoId = generateRepoId(repoName)
-    lastDirHandleRef.current = dirHandle
+    dirHandlesRef.current.set(repoId, dirHandle)
 
     // 创建仓库记录 —— 标记为本地解析模式，保存 dirHandle 供刷新复用
     dispatch({
@@ -148,20 +170,10 @@ export function useLocalParser() {
       },
     })
 
-    // 尝试从缓存加载（兼容旧版 btoa 生成的 repoId），缓存异常时静默跳过
+    // 尝试从缓存加载，缓存异常时静默跳过
     let cached: Awaited<ReturnType<typeof getCachedRepo>> | null
     try {
       cached = await getCachedRepo(repoId)
-      if (!cached) {
-        const legacyRepoId = btoa(repoName).slice(0, 12)
-        cached = await getCachedRepo(legacyRepoId)
-        if (cached) {
-          console.log('[Cache] Migrated from legacy cache:', repoName)
-          // 用新 repoId 重新保存缓存
-          await setCachedRepo({ ...cached, id: repoId, schemaVersion: CACHE_SCHEMA_VERSION })
-          await deleteCachedRepo(legacyRepoId)
-        }
-      }
     } catch (cacheErr) {
       console.warn('[Cache] 缓存读取失败，跳过缓存:', (cacheErr as Error)?.message)
       cached = null
@@ -171,7 +183,8 @@ export function useLocalParser() {
       dispatch({
         type: 'UPDATE_REPO_STOCKS',
         repoId,
-        stocks: cached.stocks,
+        // 旧缓存的 candle 可能缺 additions/deletions，兜底为 0
+        stocks: normalizeStocksCandles(cached.stocks),
       })
       dispatch({
         type: 'SET_REPO_STATUS',
@@ -186,12 +199,12 @@ export function useLocalParser() {
   }, [dispatch, runWorkerParse])
 
   /**
-   * 刷新本地解析的仓库：清除该仓库缓存后用 Worker 重新解析
-   * @returns true 表示该仓库是本地模式且已触发刷新；false 表示非本地模式，调用方应走 WebSocket
+   * 刷新本地解析的仓库：清除该仓库缓存后用 Worker 重新解析（repoId 保持稳定）
+   * @returns true 表示该仓库是本地模式且已触发刷新；false 表示未命中本地句柄
    */
   const refreshLocalRepo = useCallback(async (repoId: string): Promise<boolean> => {
-    const dirHandle = lastDirHandleRef.current
-    if (!dirHandle || generateRepoId(dirHandle.name) !== repoId) {
+    const dirHandle = dirHandlesRef.current.get(repoId)
+    if (!dirHandle) {
       return false
     }
 
@@ -207,16 +220,21 @@ export function useLocalParser() {
     return true
   }, [dispatch, runWorkerParse])
 
-  const stopParsing = useCallback(() => {
-    if (workerRef.current) {
-      workerRef.current.terminate()
-      workerRef.current = null
+  /**
+   * 停止指定本地仓库的解析：终止其 Worker 并清理句柄（无对应记录时为 no-op）
+   */
+  const stopLocalParse = useCallback((repoId: string) => {
+    const worker = workersRef.current.get(repoId)
+    if (worker) {
+      worker.terminate()
+      workersRef.current.delete(repoId)
     }
+    dirHandlesRef.current.delete(repoId)
   }, [])
 
   return {
     parseLocalRepo,
     refreshLocalRepo,
-    stopParsing,
+    stopLocalParse,
   }
 }

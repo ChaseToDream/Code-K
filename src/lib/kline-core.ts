@@ -6,7 +6,7 @@ import type { CandleData, CommitInfo } from './types';
 
 /**
  * 生成仓库 ID
- * 前后端统一使用 base64 编码前 12 字符
+ * 前后端统一使用完整 base64 编码（截断会导致同前缀路径碰撞，如 /home/user/ 下的所有仓库）
  * @param repoPath 仓库绝对路径
  */
 export function generateRepoId(repoPath: string): string {
@@ -17,7 +17,7 @@ export function generateRepoId(repoPath: string): string {
   for (let i = 0; i < data.length; i++) {
     binary += String.fromCharCode(data[i]);
   }
-  return btoa(binary).slice(0, 12);
+  return btoa(binary);
 }
 
 /**
@@ -34,13 +34,17 @@ export function generateTicker(path: string): string {
 }
 
 /**
- * 影线计算的可配置选项
+ * 创建一根 K 线蜡烛所需的文件变更信息
  */
-export interface CandleWickOptions {
-  /** 本次 commit 内新增的行数（用于推算 high 峰值） */
-  additions?: number;
-  /** 本次 commit 内删除的行数（用于推算 low 谷值） */
-  deletions?: number;
+export interface CandleFileChange {
+  /** 本次 commit 内新增的行数 */
+  additions: number;
+  /** 本次 commit 内删除的行数 */
+  deletions: number;
+  /** commit 前的文件全文（本地解析模式携带，用于 diff 查看） */
+  oldContent?: string;
+  /** commit 后的文件全文（本地解析模式携带，用于 diff 查看） */
+  newContent?: string;
 }
 
 /**
@@ -59,38 +63,44 @@ export interface CandleWickOptions {
  *   low  ≤ close                            （close = low + additions ≥ low）
  * 即：high ≥ max(open, close) ≥ min(open, close) ≥ low ≥ 0
  *
- * 向后兼容：不传 options 时影线长度为 0（high = max(open,close)，low = min(open,close)）。
+ * volume = additions + deletions；fileChange 携带 oldContent/newContent 时透传到蜡烛上。
  */
 export function createCandle(
+  commit: CommitInfo,
+  fileChange: CandleFileChange | undefined,
   open: number,
   close: number,
-  volume: number,
-  commit: CommitInfo,
-  options?: CandleWickOptions,
 ): CandleData {
-  const hasWickData =
-    options !== undefined &&
-    (typeof options.additions === 'number' || typeof options.deletions === 'number');
+  const additions = fileChange?.additions ?? 0;
+  const deletions = fileChange?.deletions ?? 0;
 
   // 影线峰值/谷底
-  const peak = open + (options?.additions ?? 0);
-  const trough = Math.max(0, open - (options?.deletions ?? 0));
+  const peak = open + additions;
+  const trough = Math.max(0, open - deletions);
 
   // high 至少为实体上端，low 至多为实体下端（防御性兜底，保证不变量恒成立）
-  const high = hasWickData ? Math.max(peak, open, close) : Math.max(open, close);
-  const low = hasWickData ? Math.min(trough, open, close) : Math.min(open, close);
+  const high = Math.max(peak, open, close);
+  const low = Math.min(trough, open, close);
 
-  return {
+  const candle: CandleData = {
     time: commit.timestamp,
     open,
     high,
     low,
     close,
-    volume,
+    volume: additions + deletions,
+    additions,
+    deletions,
     commitMessage: commit.message,
     commitHash: commit.oid.slice(0, 8),
     author: commit.author,
   };
+
+  // 内容透传：仅当 fileChange 携带时附加（后端模式通常没有内容）
+  if (fileChange?.oldContent !== undefined) candle.oldContent = fileChange.oldContent;
+  if (fileChange?.newContent !== undefined) candle.newContent = fileChange.newContent;
+
+  return candle;
 }
 
 /**
