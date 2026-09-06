@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAppContext } from './useAppContext';
-import type { ServerMessage, StartParseMessage, RequestDiffDetail } from '../lib/types';
+import { normalizeStocksCandles } from '../lib/kline-data';
+import type { ServerMessage, StartParseMessage, StopParseMessage, RequestDiffDetail, DiffDetailMessage } from '../lib/types';
 
 /**
  * 获取 WebSocket 连接地址
@@ -24,8 +25,12 @@ let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 // 订阅者集合
 type ConnectedListener = (connected: boolean) => void;
 type MessageListener = (message: ServerMessage) => void;
+type DiffDetailListener = (message: DiffDetailMessage) => void;
+type ReconnectListener = () => void;
 const connectedListeners = new Set<ConnectedListener>();
 const messageListeners = new Set<MessageListener>();
+const diffDetailListeners = new Set<DiffDetailListener>();
+const reconnectListeners = new Set<ReconnectListener>();
 
 function notifyConnected(connected: boolean) {
   connectedListeners.forEach(fn => fn(connected));
@@ -33,6 +38,19 @@ function notifyConnected(connected: boolean) {
 
 function notifyMessage(message: ServerMessage) {
   messageListeners.forEach(fn => fn(message));
+}
+
+function notifyDiffDetail(message: DiffDetailMessage) {
+  diffDetailListeners.forEach(fn => fn(message));
+}
+
+/** WS 恢复 open（含首次连接与断线重连）后触发 */
+function notifyReconnected() {
+  reconnectListeners.forEach(fn => fn());
+}
+
+function isWsOpen() {
+  return wsInstance?.readyState === WebSocket.OPEN;
 }
 
 function createConnection() {
@@ -45,11 +63,15 @@ function createConnection() {
     console.log('[WebSocket] Connected');
     reconnectAttempts = 0;
     notifyConnected(true);
+    notifyReconnected();
   };
 
   ws.onmessage = (event) => {
     try {
       const message: ServerMessage = JSON.parse(event.data);
+      if (message.type === 'diff_detail') {
+        notifyDiffDetail(message);
+      }
       notifyMessage(message);
     } catch (error) {
       console.error('[WebSocket] Failed to parse message:', error);
@@ -57,6 +79,8 @@ function createConnection() {
   };
 
   ws.onclose = () => {
+    // 旧实例（reconnect() 中被替换）的 onclose 不再触发状态变更与重连
+    if (wsInstance !== ws) return;
     console.log('[WebSocket] Disconnected');
     notifyConnected(false);
     wsInstance = null;
@@ -65,8 +89,11 @@ function createConnection() {
       reconnectAttempts++;
       console.log(`[WebSocket] Reconnecting in ${RECONNECT_DELAY}ms (attempt ${reconnectAttempts})`);
       reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
         createConnection();
       }, RECONNECT_DELAY);
+    } else {
+      console.warn('[WebSocket] Max reconnect attempts reached, call reconnect() to retry manually');
     }
   };
 
@@ -89,9 +116,31 @@ function closeConnection() {
   }
 }
 
+/**
+ * 手动重连：重置重连计数并立即建立新连接。
+ * 自动重连放弃（10 次）后的手动入口。
+ */
+function reconnect() {
+  reconnectAttempts = 0;
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  if (wsInstance) {
+    const stale = wsInstance;
+    wsInstance = null;
+    try {
+      stale.close();
+    } catch {
+      // 已断开的连接 close 可能抛错，忽略
+    }
+  }
+  createConnection();
+}
+
 export function useWebSocket() {
   const { dispatch } = useAppContext();
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(isWsOpen());
   const dispatchRef = useRef(dispatch);
 
   useEffect(() => {
@@ -118,6 +167,8 @@ export function useWebSocket() {
               current: message.current,
               total: message.total,
               message: message.message,
+              // 服务端 ETA 单位为秒，直接透传
+              estimatedTimeRemaining: message.estimatedTimeRemaining,
             },
           });
           break;
@@ -126,7 +177,7 @@ export function useWebSocket() {
           dispatchRef.current({
             type: 'UPDATE_REPO_STOCKS',
             repoId: message.repoId,
-            stocks: message.stocks,
+            stocks: normalizeStocksCandles(message.stocks),
           });
           break;
 
@@ -134,7 +185,8 @@ export function useWebSocket() {
           dispatchRef.current({
             type: 'UPDATE_REPO_STOCKS',
             repoId: message.repoId,
-            stocks: message.stocks,
+            // 命中旧磁盘缓存（fromCache）时 candle 可能缺 additions/deletions，兜底为 0
+            stocks: normalizeStocksCandles(message.stocks),
           });
           dispatchRef.current({
             type: 'SET_REPO_STATUS',
@@ -152,6 +204,13 @@ export function useWebSocket() {
           break;
 
         case 'parse_stopped':
+          if (message.repoId) {
+            dispatchRef.current({
+              type: 'SET_REPO_STATUS',
+              repoId: message.repoId,
+              status: 'idle',
+            });
+          }
           break;
 
         case 'error':
@@ -167,8 +226,7 @@ export function useWebSocket() {
           break;
 
         case 'diff_detail':
-          // TODO: 将 diff 数据传递给 DiffViewer 组件
-          console.log('[WebSocket] Diff detail received for', message.filePath);
+          // 已通过 notifyDiffDetail 分发给 onDiffDetail 订阅者
           break;
 
         case 'commits_update':
@@ -184,6 +242,11 @@ export function useWebSocket() {
 
     connectedListeners.add(onConnected);
     messageListeners.add(onMessage);
+
+    // 晚挂载的订阅者立即回放缓存状态，避免拿不到"已连接"
+    if (isWsOpen()) {
+      onConnected(true);
+    }
 
     // 首次挂载时建立连接
     createConnection();
@@ -208,9 +271,11 @@ export function useWebSocket() {
     }
   }, []);
 
-  const sendStopParse = useCallback(() => {
+  const sendStopParse = useCallback((repoPath?: string) => {
     if (wsInstance?.readyState === WebSocket.OPEN) {
-      wsInstance.send(JSON.stringify({ type: 'stop_parse' }));
+      const message: StopParseMessage = { type: 'stop_parse' };
+      if (repoPath) message.repoPath = repoPath;
+      wsInstance.send(JSON.stringify(message));
     }
   }, []);
 
@@ -226,12 +291,41 @@ export function useWebSocket() {
     }
   }, []);
 
+  /**
+   * 订阅 diff_detail 消息；handler 需自行按 commitHash/filePath 过滤
+   * @returns 取消订阅函数
+   */
+  const onDiffDetail = useCallback((handler: (msg: DiffDetailMessage) => void) => {
+    diffDetailListeners.add(handler);
+    return () => {
+      diffDetailListeners.delete(handler);
+    };
+  }, []);
+
+  /**
+   * 订阅 WS 恢复 open 事件（首次连接与断线重连均触发）。
+   * 晚挂载的订阅者注册时若连接已 OPEN，立即回放一次。
+   * @returns 取消订阅函数
+   */
+  const onReconnect = useCallback((handler: () => void) => {
+    reconnectListeners.add(handler);
+    if (isWsOpen()) {
+      handler();
+    }
+    return () => {
+      reconnectListeners.delete(handler);
+    };
+  }, []);
+
   return {
     connect: createConnection,
     disconnect: closeConnection,
+    reconnect,
     sendStartParse,
     sendStopParse,
     sendRequestDiff,
+    onDiffDetail,
+    onReconnect,
     isConnected,
   };
 }

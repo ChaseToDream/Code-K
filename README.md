@@ -19,7 +19,8 @@
 - **实时解析进度** — WebSocket 推送 `progress` / `partial` / `complete` 三阶段
 - **完整图表** — 蜡烛图（lightweight-charts）+ 迷你走势图 + 红绿 diff 对比
 - **虚拟列表** — `react-window` 大列表高性能渲染
-- **多仓库 Tab** — 同时打开多个仓库，标签页切换
+- **数据导出** — 行情列表导出 CSV，个股页导出 K 线 PNG 与明细 JSON
+- **多仓库 Tab** — 同时打开多个仓库，标签页切换，多仓库可并发解析
 - **键盘快捷键** — `Ctrl+K` 搜索、`G H` 首页、`G M` 行情、`?` 查看全部快捷键
 - **桌面应用** — Electron 打包为 Windows Portable 独立可执行文件
 - **赛博金融终端 UI** — Tailwind v4 + JetBrains Mono / Orbitron 字体
@@ -217,25 +218,23 @@ npm run electron:build
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/api/discover` | GET | 扫描常见目录的 Git 仓库 |
-| `/api/resolve?name=<folder>` | GET | 按文件夹名搜索 Git 仓库 |
 | `/api/log?path=<repo>&limit=N` | GET | 获取仓库提交列表 |
-| `/api/diff?path=<repo>&hash=<hash>&parentHash=<hash>` | GET | 获取某次 commit 的文件变更 |
 | `/api/cache/stats` | GET | 查看缓存统计信息 |
 | `/api/cache?path=<repo>` | DELETE | 清除指定仓库缓存（不传 path 则清除全部）|
 
 ### WebSocket（`ws://localhost:3001`）
 
 **客户端 → 服务端：**
-- `start_parse` `{ repoPath, repoName, maxCommits? }` — 启动解析
-- `stop_parse` — 中止当前解析
+- `start_parse` `{ repoPath, repoName, maxCommits? }` — 启动解析（同一连接支持多仓库并发）
+- `stop_parse` `{ repoPath? }` — 中止指定仓库解析（不传则中止该连接全部任务）
 - `request_diff` `{ repoPath, commitHash, filePath }` — 请求 diff 详情
 
 **服务端 → 客户端：**
-- `parse_started` / `parse_stopped` — 生命周期
-- `progress` `{ phase, current, total, message }` — 进度
-- `partial` — 阶段性 K 线结果（每 10 个 commit 推送一次）
-- `complete` — 最终结果
-- `diff_detail` — 文件 diff 详情
+- `parse_started` / `parse_stopped` `{ repoId }` — 生命周期
+- `progress` `{ phase, current, total, message, estimatedTimeRemaining? }` — 进度（ETA 单位：秒）
+- `partial` — 阶段性 K 线结果（每 10 个 commit 累积推送一次）
+- `complete` — 最终结果（缓存命中时带 `fromCache: true`）
+- `diff_detail` `{ oldContent, newContent, additions, deletions, isBinary?, error? }` — 文件 diff 详情（真实内容与增删行数）
 - `error`
 
 完整类型定义见 [src/lib/types.ts](./src/lib/types.ts)。

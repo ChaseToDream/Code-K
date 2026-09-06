@@ -2,17 +2,24 @@ import { useEffect, useRef } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { FileStock } from '../lib/types'
-import { FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
+import { CHART_COLORS, FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
 
 interface KlineChartProps {
   stock: FileStock
+  /** 图表初始化完成后回调一次（用于导出、外部联动等） */
+  onChartReady?: (api: IChartApi) => void
 }
 
-export default function KlineChart({ stock }: KlineChartProps) {
+export default function KlineChart({ stock, onChartReady }: KlineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const onChartReadyRef = useRef(onChartReady)
+
+  useEffect(() => {
+    onChartReadyRef.current = onChartReady
+  }, [onChartReady])
 
   // 初始化图表（只执行一次）
   useEffect(() => {
@@ -90,10 +97,10 @@ export default function KlineChart({ stock }: KlineChartProps) {
 
     // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#00e676',
-      downColor: '#ff1744',
-      borderUpColor: '#00e676',
-      borderDownColor: '#ff1744',
+      upColor: CHART_COLORS.up,
+      downColor: CHART_COLORS.down,
+      borderUpColor: CHART_COLORS.up,
+      borderDownColor: CHART_COLORS.down,
       wickUpColor: WICK_STYLE.upColor,
       wickDownColor: WICK_STYLE.downColor,
     })
@@ -110,17 +117,18 @@ export default function KlineChart({ stock }: KlineChartProps) {
       scaleMargins: { top: 0.8, bottom: 0 },
     })
 
-    // Resize handler —— 仅更新容器宽度，不重算 barSpacing（保持 K 线固定宽度）
-    const handleResize = () => {
+    // 观察容器自身尺寸变化（侧栏开合、窗口缩放都会触发），仅更新宽度，不重算 barSpacing
+    const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
       const newWidth = chartContainerRef.current.clientWidth
       chartRef.current.applyOptions({ width: newWidth })
-    }
+    })
+    resizeObserver.observe(container)
 
-    window.addEventListener('resize', handleResize)
+    onChartReadyRef.current?.(chart)
 
     return () => {
-      window.removeEventListener('resize', handleResize)
+      resizeObserver.disconnect()
       candleSeriesRef.current = null
       volumeSeriesRef.current = null
       chartRef.current = null
@@ -144,7 +152,7 @@ export default function KlineChart({ stock }: KlineChartProps) {
     const volumeData: HistogramData[] = stock.candles.map((c) => ({
       time: c.time as Time,
       value: c.volume,
-      color: c.close >= c.open ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+      color: c.close >= c.open ? CHART_COLORS.upVolume : CHART_COLORS.downVolume,
     }))
     volumeSeriesRef.current.setData(volumeData)
 

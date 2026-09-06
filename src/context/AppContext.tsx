@@ -7,7 +7,6 @@ import { generateTicker, createCandle, calcChangePercent } from '../lib/kline-co
 interface AppState {
   repos: Record<string, RepoInfo>;
   activeRepoId: string | null;
-  selectedStock: FileStock | null;
   wsConnected: boolean;
 }
 
@@ -20,20 +19,21 @@ type AppAction =
   | { type: 'UPDATE_REPO_STOCKS'; repoId: string; stocks: FileStock[] }
   | { type: 'APPEND_REPO_COMMITS'; repoId: string; commits: CommitDiff[] }
   | { type: 'SET_REPO_STATUS'; repoId: string; status: RepoInfo['status']; error?: string }
-  | { type: 'SELECT_STOCK'; stock: FileStock | null }
   | { type: 'SET_WS_CONNECTED'; connected: boolean };
 
 // 初始状态
 const initialState: AppState = {
   repos: {},
   activeRepoId: null,
-  selectedStock: null,
   wsConnected: false,
 };
 
 /**
  * 将增量 commits 合并到现有 stocks 中
  * 增量 commits 按时间正序排列（旧 -> 新），追加到已有 candle 序列末尾
+ *
+ * 不可变更新：命中的 FileStock 一律浅拷贝（candles 数组复制后再追加），
+ * 绝不原地突变 state 中已有的对象，保证 React 引用比较能检测到变化。
  */
 function applyCommitsToStocks(
   existingStocks: FileStock[],
@@ -41,6 +41,21 @@ function applyCommitsToStocks(
   repoId: string
 ): FileStock[] {
   const stockMap = new Map(existingStocks.map(s => [s.path, s]));
+  // 记录已拷贝过的 path，避免同一次合并中对同一 stock 重复拷贝
+  const copied = new Set<string>();
+
+  /** 取 path 对应的 stock 的可写拷贝（首次访问时浅拷贝 + 复制 candles） */
+  const mutableCopy = (path: string): FileStock | undefined => {
+    const stock = stockMap.get(path);
+    if (!stock) return undefined;
+    if (!copied.has(path)) {
+      const copy: FileStock = { ...stock, candles: [...stock.candles] };
+      stockMap.set(path, copy);
+      copied.add(path);
+      return copy;
+    }
+    return stock;
+  };
 
   for (const diff of newCommits) {
     const { commit, files } = diff;
@@ -48,33 +63,33 @@ function applyCommitsToStocks(
     for (const file of files) {
       // 重命名：把旧路径的 stock 迁移到新路径（与 server buildFileStocks 保持一致）
       if (file.renamedFrom && file.path !== file.renamedFrom && stockMap.has(file.renamedFrom)) {
-        const oldStock = stockMap.get(file.renamedFrom)!;
+        const oldStock = mutableCopy(file.renamedFrom)!;
         stockMap.delete(file.renamedFrom);
+        copied.delete(file.renamedFrom);
         oldStock.path = file.path;
         oldStock.ticker = generateTicker(file.path);
         stockMap.set(file.path, oldStock);
+        copied.add(file.path);
       }
 
-      let stock = stockMap.get(file.path);
+      let stock = mutableCopy(file.path);
 
       if (!stock) {
-        // IPO：新文件首次出现
+        // IPO：新文件首次出现（增量场景下首次出现即最新 commit → ipo，与 buildFileStocks 全量规则一致）
         const open = 0;
         const close = Math.max(0, file.additions - file.deletions);
+        const candle = createCandle(commit, file, open, close);
         stock = {
           path: file.path,
           ticker: generateTicker(file.path),
-          candles: [createCandle(open, close, file.additions + file.deletions, commit, {
-            additions: file.additions,
-            deletions: file.deletions,
-          })],
+          candles: [candle],
           currentLines: close,
           status: 'ipo',
           firstCommit: commit,
           lastCommit: commit,
           totalAdditions: file.additions,
           totalDeletions: file.deletions,
-          changePercent: close > 0 ? 100 : 0,
+          changePercent: calcChangePercent(candle),
           repoId,
         };
         stockMap.set(file.path, stock);
@@ -83,17 +98,19 @@ function applyCommitsToStocks(
         const open = stock.currentLines;
         const change = file.additions - file.deletions;
         const close = Math.max(0, open + change);
+        const candle = createCandle(commit, file, open, close);
 
-        stock.candles.push(createCandle(open, close, file.additions + file.deletions, commit, {
-          additions: file.additions,
-          deletions: file.deletions,
-        }));
+        stock.candles.push(candle);
         stock.currentLines = close;
         stock.totalAdditions += file.additions;
         stock.totalDeletions += file.deletions;
         stock.lastCommit = commit;
-        stock.status = close === 0 && file.deletions > 0 ? 'delisted' : 'active';
-        stock.changePercent = calcChangePercent(stock.candles[stock.candles.length - 1]);
+        // 状态机与 buildFileStocks 全量规则对齐：
+        // - delisted 粘性（曾经清零退市即保持）
+        // - 单根蜡烛 → ipo，之后 → active
+        const delisted = stock.status === 'delisted' || (close === 0 && file.deletions > 0);
+        stock.status = delisted ? 'delisted' : stock.candles.length === 1 ? 'ipo' : 'active';
+        stock.changePercent = calcChangePercent(candle);
       }
     }
   }
@@ -137,22 +154,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
       const updatedStocks = applyCommitsToStocks(repo.stocks, action.commits, action.repoId);
 
-      // 如果当前选中的股票属于该仓库，同步更新
-      let newSelectedStock = state.selectedStock;
-      if (state.selectedStock?.repoId === action.repoId) {
-        const updated = updatedStocks.find(s => s.path === state.selectedStock!.path);
-        if (updated) newSelectedStock = updated;
-      }
-
-      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: updatedStocks } }, selectedStock: newSelectedStock };
+      return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, stocks: updatedStocks } } };
     }
     case 'SET_REPO_STATUS': {
       const repo = state.repos[action.repoId];
       if (!repo) return state;
       return { ...state, repos: { ...state.repos, [action.repoId]: { ...repo, status: action.status, error: action.error } } };
-    }
-    case 'SELECT_STOCK': {
-      return { ...state, selectedStock: action.stock };
     }
     case 'SET_WS_CONNECTED': {
       return { ...state, wsConnected: action.connected };

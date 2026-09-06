@@ -13,8 +13,6 @@ export interface FileChange {
   newContent?: string;
   /** 重命名来源路径（当 git numstat 检测到文件移动/重命名时填充） */
   renamedFrom?: string;
-  /** 标记为二进制文件（无行数可统计，不生成 K 线） */
-  isBinary?: boolean;
 }
 
 export interface CommitDiff {
@@ -29,6 +27,8 @@ export interface CandleData {
   low: number;        // min(open, close)
   close: number;      // lines after commit
   volume: number;     // additions + deletions
+  additions: number;  // 本次 commit 新增行数
+  deletions: number;  // 本次 commit 删除行数
   commitMessage: string;
   commitHash: string;
   author: string;
@@ -56,7 +56,7 @@ export interface ParseProgress {
   total: number;
   message: string;
   currentFile?: string;
-  estimatedTimeRemaining?: number; // 毫秒
+  estimatedTimeRemaining?: number; // 秒
   startTime?: number;
 }
 
@@ -100,6 +100,8 @@ export interface ProgressMessage {
   current: number;
   total: number;
   message: string;
+  /** 预计剩余时间（秒），仅 building 阶段携带 */
+  estimatedTimeRemaining?: number;
 }
 
 export interface PartialResultMessage {
@@ -116,6 +118,8 @@ export interface CompleteMessage {
   stocks: FileStock[];
   totalCommits: number;
   totalTime: number;
+  /** true 表示结果来自服务端磁盘缓存（HEAD 未变化） */
+  fromCache?: boolean;
 }
 
 export interface ErrorMessage {
@@ -127,12 +131,17 @@ export interface ErrorMessage {
 
 export interface DiffDetailMessage {
   type: 'diff_detail';
+  repoPath: string;
   commitHash: string;
   filePath: string;
-  oldContent: string;
-  newContent: string;
+  oldContent: string | null;
+  newContent: string | null;
   additions: number;
   deletions: number;
+  /** 二进制文件无法提供文本内容时置 true（oldContent/newContent 为 null） */
+  isBinary?: boolean;
+  /** git 操作失败时的错误信息（不击穿 WebSocket 连接） */
+  error?: string;
 }
 
 export interface ParseStartedMessage {
@@ -143,6 +152,8 @@ export interface ParseStartedMessage {
 
 export interface ParseStoppedMessage {
   type: 'parse_stopped';
+  /** 被停止的仓库 ID；旧协议不带 repoPath 的 stop_parse 且无任务在跑时可能缺失 */
+  repoId?: string;
 }
 
 export interface CommitsUpdateMessage {
@@ -164,6 +175,8 @@ export interface StartParseMessage {
 
 export interface StopParseMessage {
   type: 'stop_parse';
+  /** 指定后只停止该仓库的解析；缺省时停止该连接上的所有解析任务 */
+  repoPath?: string;
 }
 
 export interface RequestDiffDetail {

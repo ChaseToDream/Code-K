@@ -1,6 +1,8 @@
 import { runGit } from './git-utils.js'
 import { parseNumstatLine, parseNumstat } from './lib/numstat-parser.js'
 import { createTaggedLogger } from './lib/logger.js'
+import { applyCommitsToStocks } from './services/parser.js'
+import { loadCache, saveCache } from './services/cache.js'
 
 const logger = createTaggedLogger('Watcher')
 
@@ -59,7 +61,7 @@ async function getCommitWithDiff(repoPath, hash) {
       const parsed = parseNumstatLine(line)
       if (!parsed) continue
       if (parsed.isBinary) {
-        logger.debug('skipped binary', { path: parsed.path, commit: commitHash?.slice(0, 8) })
+        logger.debug('skipped binary', { path: parsed.path, commit: currentCommit?.oid?.slice(0, 8) })
         continue
       }
       files.push({
@@ -223,6 +225,22 @@ async function checkForUpdates(repoId) {
     }
 
     console.log(`[Watcher] Pushed ${commitDiffs.length} new commits to ${watcher.clients.size} client(s)`)
+
+    // 同步磁盘缓存：合并增量 commits 并推进 lastHead，避免下次 start_parse 缓存失效全量重解析
+    try {
+      const cached = loadCache(repoId)
+      if (cached && Array.isArray(cached.stocks)) {
+        const updatedStocks = applyCommitsToStocks(cached.stocks, commitDiffs, repoId)
+        saveCache(repoId, {
+          ...cached,
+          lastHead: currentHead,
+          stocks: updatedStocks,
+          commitCount: (cached.commitCount || 0) + commitDiffs.length,
+        })
+      }
+    } catch (cacheErr) {
+      console.error(`[Watcher] Failed to update cache for ${repoName}:`, cacheErr.message)
+    }
 
   } catch (error) {
     console.error(`[Watcher] Error checking updates for ${repoName}:`, error.message)

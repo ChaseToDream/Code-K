@@ -36,15 +36,18 @@ describe('generateTicker', () => {
 })
 
 describe('createCandle', () => {
-  it('创建一根标准 K 线蜡烛', () => {
-    const candle = createCandle(100, 150, 50, mockCommit)
+  it('创建一根标准 K 线蜡烛（volume = additions + deletions）', () => {
+    // open=100, additions=60, deletions=10 → close=150
+    const candle = createCandle(mockCommit, { additions: 60, deletions: 10 }, 100, 150)
     expect(candle).toEqual({
       time: 1700000000,
       open: 100,
-      high: 150,
-      low: 100,
+      high: 160, // open + additions
+      low: 90,   // open - deletions
       close: 150,
-      volume: 50,
+      volume: 70,
+      additions: 60,
+      deletions: 10,
       commitMessage: 'feat: add new component',
       commitHash: 'abc123de',
       author: 'test-user',
@@ -52,16 +55,19 @@ describe('createCandle', () => {
   })
 
   it('创建下跌蜡烛', () => {
-    const candle = createCandle(200, 50, 150, mockCommit)
+    // open=200, additions=50, deletions=200 → close=50
+    const candle = createCandle(mockCommit, { additions: 50, deletions: 200 }, 200, 50)
     expect(candle.open).toBe(200)
     expect(candle.close).toBe(50)
-    expect(candle.high).toBe(200)
-    expect(candle.low).toBe(50)
-    expect(candle.volume).toBe(150)
+    expect(candle.high).toBe(250) // 200 + 50
+    expect(candle.low).toBe(0)    // max(0, 200 - 200)
+    expect(candle.volume).toBe(250)
+    expect(candle.additions).toBe(50)
+    expect(candle.deletions).toBe(200)
   })
 
   it('创建 IPO 蜡烛（open=0）', () => {
-    const candle = createCandle(0, 100, 100, mockCommit)
+    const candle = createCandle(mockCommit, { additions: 100, deletions: 0 }, 0, 100)
     expect(candle.open).toBe(0)
     expect(candle.close).toBe(100)
     expect(candle.high).toBe(100)
@@ -71,7 +77,7 @@ describe('createCandle', () => {
   describe('带 additions/deletions 的影线（波动幅度语义）', () => {
     it('纯增：high = open + additions，low = open', () => {
       // open=100, close=150（净增 50）；additions=60, deletions=10
-      const candle = createCandle(100, 150, 70, mockCommit, { additions: 60, deletions: 10 })
+      const candle = createCandle(mockCommit, { additions: 60, deletions: 10 }, 100, 150)
       expect(candle.high).toBe(160) // 100 + 60
       expect(candle.low).toBe(90)   // max(0, 100 - 10) = 90
       expect(candle.close).toBe(150)
@@ -79,14 +85,14 @@ describe('createCandle', () => {
 
     it('纯删：low = open - deletions，high = open', () => {
       // open=200, close=150（净删 50）；additions=0, deletions=50
-      const candle = createCandle(200, 150, 50, mockCommit, { additions: 0, deletions: 50 })
+      const candle = createCandle(mockCommit, { additions: 0, deletions: 50 }, 200, 150)
       expect(candle.high).toBe(200) // max(200 + 0, 150) = 200
       expect(candle.low).toBe(150)  // min(max(0, 200-50), 150) = min(150, 150) = 150
     })
 
     it('先删后加（low 下探到 0 边界）', () => {
       // open=10, deletions=20 → 理论谷底 max(0, 10-20)=0；close=30
-      const candle = createCandle(10, 30, 50, mockCommit, { additions: 40, deletions: 20 })
+      const candle = createCandle(mockCommit, { additions: 40, deletions: 20 }, 10, 30)
       expect(candle.low).toBe(0)    // 被下界 0 截断
       expect(candle.high).toBe(50)  // 10 + 40
     })
@@ -95,7 +101,7 @@ describe('createCandle', () => {
       // open=100, additions=80, deletions=60 → close=120
       // peak = 100+80 = 180（上影线顶端）
       // trough = max(0, 100-60) = 40（下影线底端）
-      const candle = createCandle(100, 120, 140, mockCommit, { additions: 80, deletions: 60 })
+      const candle = createCandle(mockCommit, { additions: 80, deletions: 60 }, 100, 120)
       expect(candle.high).toBe(180) // 上影线 = 180 - 120 = 60
       expect(candle.low).toBe(40)   // 下影线 = 100 - 40 = 60
       expect(candle.close).toBe(120)
@@ -104,15 +110,16 @@ describe('createCandle', () => {
     it('纯增只有上影线无下影线（对标真实股票纯阳线）', () => {
       // open=50, additions=100, deletions=0 → close=150
       // peak = 150, trough = max(0, 50) = 50 = open → 无下影线
-      const candle = createCandle(50, 150, 100, mockCommit, { additions: 100, deletions: 0 })
+      const candle = createCandle(mockCommit, { additions: 100, deletions: 0 }, 50, 150)
       expect(candle.high).toBe(150) // = open + additions = close（无上影线，因为 close 达到峰值）
       expect(candle.low).toBe(50)   // = open（无下影线，因为文件单调增长）
     })
 
-    it('additions=0 且 deletions=0：影线退化为实体端点（与旧逻辑一致）', () => {
-      const candle = createCandle(100, 100, 0, mockCommit, { additions: 0, deletions: 0 })
+    it('additions=0 且 deletions=0：影线退化为实体端点', () => {
+      const candle = createCandle(mockCommit, { additions: 0, deletions: 0 }, 100, 100)
       expect(candle.high).toBe(100)
       expect(candle.low).toBe(100)
+      expect(candle.volume).toBe(0)
     })
 
     it('不变量：high >= max(open, close) >= min(open, close) >= low >= 0', () => {
@@ -124,10 +131,7 @@ describe('createCandle', () => {
         { open: 50, close: 0, additions: 0, deletions: 50 },
       ]
       for (const c of cases) {
-        const candle = createCandle(c.open, c.close, c.additions + c.deletions, mockCommit, {
-          additions: c.additions,
-          deletions: c.deletions,
-        })
+        const candle = createCandle(mockCommit, { additions: c.additions, deletions: c.deletions }, c.open, c.close)
         const bodyHigh = Math.max(c.open, c.close)
         const bodyLow = Math.min(c.open, c.close)
         expect(candle.high).toBeGreaterThanOrEqual(bodyHigh)
@@ -137,46 +141,78 @@ describe('createCandle', () => {
     })
   })
 
-  it('不传 options 时保持向后兼容（影线长度为 0）', () => {
-    const candle = createCandle(100, 150, 50, mockCommit)
-    expect(candle.high).toBe(150) // max(open, close)
-    expect(candle.low).toBe(100)  // min(open, close)
+  describe('additions/deletions 与内容透传', () => {
+    it('candle 上携带 additions/deletions，volume 为两者之和', () => {
+      const candle = createCandle(mockCommit, { additions: 12, deletions: 5 }, 100, 107)
+      expect(candle.additions).toBe(12)
+      expect(candle.deletions).toBe(5)
+      expect(candle.volume).toBe(17)
+    })
+
+    it('fileChange 携带 oldContent/newContent 时透传到 candle', () => {
+      const candle = createCandle(
+        mockCommit,
+        { additions: 1, deletions: 1, oldContent: 'before', newContent: 'after' },
+        10,
+        10,
+      )
+      expect(candle.oldContent).toBe('before')
+      expect(candle.newContent).toBe('after')
+    })
+
+    it('fileChange 不携带内容时 candle 上没有内容字段', () => {
+      const candle = createCandle(mockCommit, { additions: 1, deletions: 0 }, 10, 11)
+      expect(candle.oldContent).toBeUndefined()
+      expect(candle.newContent).toBeUndefined()
+      expect('oldContent' in candle).toBe(false)
+      expect('newContent' in candle).toBe(false)
+    })
+
+    it('fileChange 为空内容字符串时也照常透传', () => {
+      const candle = createCandle(
+        mockCommit,
+        { additions: 0, deletions: 3, oldContent: 'a\nb\nc', newContent: '' },
+        3,
+        0,
+      )
+      expect(candle.oldContent).toBe('a\nb\nc')
+      expect(candle.newContent).toBe('')
+    })
+
+    it('fileChange 缺省时 additions/deletions 兜底为 0（与后端行为一致）', () => {
+      const candle = createCandle(mockCommit, undefined, 100, 150)
+      expect(candle.additions).toBe(0)
+      expect(candle.deletions).toBe(0)
+      expect(candle.volume).toBe(0)
+      expect(candle.high).toBe(150) // max(open, close)
+      expect(candle.low).toBe(100)  // min(open, close)
+    })
   })
 })
 
 describe('calcChangePercent', () => {
   it('上涨时计算正确百分比', () => {
-    const candle: CandleData = {
-      ...createCandle(100, 150, 50, mockCommit),
-    }
+    const candle: CandleData = createCandle(mockCommit, { additions: 50, deletions: 0 }, 100, 150)
     expect(calcChangePercent(candle)).toBe(50)
   })
 
   it('下跌时计算正确百分比', () => {
-    const candle: CandleData = {
-      ...createCandle(100, 80, 20, mockCommit),
-    }
+    const candle: CandleData = createCandle(mockCommit, { additions: 0, deletions: 20 }, 100, 80)
     expect(calcChangePercent(candle)).toBe(-20)
   })
 
   it('IPO 蜡烛（open=0, close>0）返回 100', () => {
-    const candle: CandleData = {
-      ...createCandle(0, 100, 100, mockCommit),
-    }
+    const candle: CandleData = createCandle(mockCommit, { additions: 100, deletions: 0 }, 0, 100)
     expect(calcChangePercent(candle)).toBe(100)
   })
 
   it('退市蜡烛（open>0, close=0）返回 -100', () => {
-    const candle: CandleData = {
-      ...createCandle(100, 0, 100, mockCommit),
-    }
+    const candle: CandleData = createCandle(mockCommit, { additions: 0, deletions: 100 }, 100, 0)
     expect(calcChangePercent(candle)).toBe(-100)
   })
 
   it('open=0 且 close=0 返回 0', () => {
-    const candle: CandleData = {
-      ...createCandle(0, 0, 0, mockCommit),
-    }
+    const candle: CandleData = createCandle(mockCommit, { additions: 0, deletions: 0 }, 0, 0)
     expect(calcChangePercent(candle)).toBe(0)
   })
 })

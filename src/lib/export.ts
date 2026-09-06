@@ -1,3 +1,4 @@
+import type { IChartApi } from 'lightweight-charts'
 import type { FileStock } from './types'
 
 export function exportToCSV(stocks: FileStock[], filename: string = 'stocks.csv'): void {
@@ -28,16 +29,17 @@ export function exportToCSV(stocks: FileStock[], filename: string = 'stocks.csv'
   URL.revokeObjectURL(url)
 }
 
-export function exportChartToPNG(chartContainer: HTMLElement, filename: string = 'chart.png'): void {
-  const canvas = chartContainer.querySelector('canvas')
-  if (!canvas) {
-    console.error('No canvas found in chart container')
-    return
-  }
+/**
+ * 导出 K 线图表为 PNG
+ * @param chart lightweight-charts 的 IChartApi 实例；为 null 时静默返回
+ * @param filename 下载文件名
+ */
+export function exportChartAsPNG(chart: IChartApi | null, filename: string): void {
+  if (!chart) return
 
   const link = document.createElement('a')
   link.download = filename
-  link.href = canvas.toDataURL('image/png')
+  link.href = chart.takeScreenshot().toDataURL('image/png')
   link.click()
 }
 

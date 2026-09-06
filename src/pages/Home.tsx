@@ -7,25 +7,30 @@ export default function Home() {
   const navigate = useNavigate()
   const { wsConnected, startParsing } = useRepo()
   const { parseLocalRepo } = useLocalParser()
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [backendError, setBackendError] = useState<string | null>(null)
+  const [repoSearch, setRepoSearch] = useState('')
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [repos, setRepos] = useState<Array<{ path: string; name: string }>>([])
 
   useEffect(() => {
     let cancelled = false
-    
+
     const fetchRepos = async () => {
       try {
         const r = await fetch('/api/discover')
         const data = await r.json()
         if (!cancelled) {
           setRepos(data.repos || [])
+          setBackendError(null)
           setLoading(false)
         }
       } catch {
         if (!cancelled) {
+          // 后端不可达与"没有仓库"区分开：提示离线但仍可用本地文件夹解析
+          setBackendError('无法连接后端服务（可继续使用本地文件夹解析）')
           setLoading(false)
         }
       }
@@ -134,11 +139,16 @@ export default function Home() {
       setError(err instanceof Error ? err.message : '选择失败')
       setVerifying(false)
     }
-  }, [parseLocalRepo, navigate, isElectron])
+  }, [parseLocalRepo, navigate, isElectron, startParsing])
 
   const handleRepoClick = useCallback(async (repo: { path: string; name: string }) => {
     await handleSelectRepo(repo.path)
   }, [handleSelectRepo])
+
+  // 客户端按名称过滤已发现的仓库
+  const filteredRepos = repoSearch
+    ? repos.filter((repo) => repo.name.toLowerCase().includes(repoSearch.toLowerCase()))
+    : repos
 
   return (
     <div className="h-full flex flex-col grid-bg relative overflow-hidden">
@@ -151,9 +161,10 @@ export default function Home() {
           <span className="text-xs text-ex-dim font-mono tracking-[0.2em]">代码交易所</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-ex-green' : 'bg-ex-red'}`} />
+          {/* 未连接时不一定是故障：浏览器本地模式下 WS 永不连接，用中性灰点表示离线模式 */}
+          <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-ex-green' : 'bg-ex-dim'}`} />
           <span className="text-xs font-mono text-ex-dim">
-            {wsConnected ? '已连接' : '未连接'}
+            {wsConnected ? '已连接' : '离线模式 · 可用本地文件夹解析'}
           </span>
         </div>
       </div>
@@ -205,6 +216,12 @@ export default function Home() {
             </div>
           )}
 
+          {backendError && (
+            <div className="bg-ex-gold/10 border border-ex-gold/30 rounded-lg px-4 py-3 text-ex-gold text-sm font-mono text-center">
+              {backendError}
+            </div>
+          )}
+
           {loading && (
             <div className="text-center py-8">
               <div className="inline-flex items-center gap-3 text-ex-dim font-mono text-sm">
@@ -216,9 +233,20 @@ export default function Home() {
 
           {!loading && repos.length > 0 && (
             <>
-              <div className="text-xs text-ex-dim font-mono">发现 {repos.length} 个仓库</div>
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-xs text-ex-dim font-mono">发现 {repos.length} 个仓库</div>
+                {repos.length > 3 && (
+                  <input
+                    type="text"
+                    placeholder="按名称搜索仓库..."
+                    value={repoSearch}
+                    onChange={(e) => setRepoSearch(e.target.value)}
+                    className="w-56 bg-ex-surface border border-ex-border rounded-lg px-3 py-1.5 text-xs font-mono text-ex-heading placeholder:text-ex-dim focus:outline-none focus:border-ex-accent/50 transition-colors"
+                  />
+                )}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {repos.map((repo) => (
+                {filteredRepos.map((repo) => (
                   <button
                     key={repo.path}
                     onClick={() => handleRepoClick(repo)}
@@ -250,7 +278,7 @@ export default function Home() {
             </>
           )}
 
-          {!loading && repos.length === 0 && !error && (
+          {!loading && repos.length === 0 && !error && !backendError && (
             <div className="text-center py-12 space-y-3">
               <div className="text-ex-dim text-lg">未发现 Git 仓库</div>
               <div className="text-ex-dim text-sm font-mono">请点击上方按钮选择包含 .git 的文件夹</div>

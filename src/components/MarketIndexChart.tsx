@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
-import type { IChartApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, CandlestickData, HistogramData, Time } from 'lightweight-charts'
 import type { IndexCandle } from '../hooks/useMarketIndex'
-import { FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
+import { CHART_COLORS, FIXED_BAR_SPACING, WICK_STYLE } from '../lib/chart-config'
 
 interface MarketIndexChartProps {
   candles: IndexCandle[]
@@ -10,15 +10,24 @@ interface MarketIndexChartProps {
 
 /**
  * 综合指数 K 线图组件
+ * 初始化一次 + series.setData 增量更新，数据刷新不丢失用户缩放状态
  */
 export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
-  const chartContainerRef = useRef<HTMLDivElement>(null)
+  // 回调 ref：容器挂载/卸载时触发（空数据时渲染占位、不渲染容器）
+  const [container, setContainer] = useState<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const prevDataLenRef = useRef(0)
+  const candlesRef = useRef(candles)
 
   useEffect(() => {
-    if (!chartContainerRef.current || candles.length === 0) return
+    candlesRef.current = candles
+  }, [candles])
 
-    const container = chartContainerRef.current
+  // 初始化图表（容器存在期间只执行一次）
+  useEffect(() => {
+    if (!container || chartRef.current) return
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -90,13 +99,68 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
 
     // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#00e676',
-      downColor: '#ff1744',
-      borderUpColor: '#00e676',
-      borderDownColor: '#ff1744',
+      upColor: CHART_COLORS.up,
+      downColor: CHART_COLORS.down,
+      borderUpColor: CHART_COLORS.up,
+      borderDownColor: CHART_COLORS.down,
       wickUpColor: WICK_STYLE.upColor,
       wickDownColor: WICK_STYLE.downColor,
     })
+    candleSeriesRef.current = candleSeries
+
+    // Volume series (histogram at bottom)
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+    })
+    volumeSeriesRef.current = volumeSeries
+
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    })
+
+    // 容器晚于数据到达时（空数据 → 有数据），初始化时补写一次数据并对齐右端
+    const initial = candlesRef.current
+    if (initial.length > 0) {
+      candleSeries.setData(initial.map((c) => ({
+        time: c.time as Time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })))
+      volumeSeries.setData(initial.map((c) => ({
+        time: c.time as Time,
+        value: c.volume,
+        color: c.close >= c.open ? CHART_COLORS.upVolume : CHART_COLORS.downVolume,
+      })))
+      prevDataLenRef.current = initial.length
+      chart.timeScale().scrollToRealTime()
+    }
+
+    // Resize handler —— 仅更新容器宽度，不重算 barSpacing（保持 K 线固定宽度）
+    const handleResize = () => {
+      chart.applyOptions({ width: container.clientWidth })
+    }
+
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      candleSeriesRef.current = null
+      volumeSeriesRef.current = null
+      chartRef.current = null
+      chart.remove()
+    }
+  }, [container])
+
+  // 数据更新：candles 变化时复用 chart 实例，仅更新 series 数据（保留用户缩放）
+  useEffect(() => {
+    // 仅初始加载（数据从 0 变为 >0）时对齐到右端；后续增量更新不打扰用户视口
+    const hadData = prevDataLenRef.current > 0
+    prevDataLenRef.current = candles.length
+
+    if (!chartRef.current || !candleSeriesRef.current || !volumeSeriesRef.current) return
 
     const candleData: CandlestickData[] = candles.map((c) => ({
       time: c.time as Time,
@@ -105,44 +169,23 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
       low: c.low,
       close: c.close,
     }))
-
-    candleSeries.setData(candleData)
-
-    // Volume series (histogram at bottom)
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    })
-
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    })
+    candleSeriesRef.current.setData(candleData)
 
     const volumeData: HistogramData[] = candles.map((c) => ({
       time: c.time as Time,
       value: c.volume,
-      color: c.close >= c.open ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+      color: c.close >= c.open ? CHART_COLORS.upVolume : CHART_COLORS.downVolume,
     }))
+    volumeSeriesRef.current.setData(volumeData)
 
-    volumeSeries.setData(volumeData)
-
-    // 保持固定宽度：对齐到右端，而非 fitContent（后者会把数据拉伸到容器宽度）
-    chart.timeScale().scrollToRealTime()
-
-    // Resize handler —— 仅更新容器宽度，不重算 barSpacing（保持 K 线固定宽度）
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth })
-      }
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      chart.remove()
+    if (!hadData && candles.length > 0) {
+      chartRef.current.timeScale().scrollToRealTime()
     }
   }, [candles])
+
+  const handleContainerRef = useCallback((el: HTMLDivElement | null) => {
+    setContainer(el)
+  }, [])
 
   if (candles.length === 0) {
     return (
@@ -154,7 +197,7 @@ export default function MarketIndexChart({ candles }: MarketIndexChartProps) {
 
   return (
     <div className="w-full">
-      <div ref={chartContainerRef} className="w-full" />
+      <div ref={handleContainerRef} className="w-full" />
     </div>
   )
 }

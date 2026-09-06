@@ -8,7 +8,7 @@ const STORE_NAME = 'repos'
  * 缓存数据结构版本。当 K 线数据语义发生不兼容变更（如影线 high/low 计算方式改变）时递增，
  * 旧版本缓存会被自动视为未命中，触发重新解析，避免展示陈旧数据。
  */
-export const CACHE_SCHEMA_VERSION = 2
+export const CACHE_SCHEMA_VERSION = 3
 
 interface CachedRepo {
   id: string

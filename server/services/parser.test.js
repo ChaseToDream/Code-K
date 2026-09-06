@@ -154,9 +154,10 @@ describe('buildFileStocks', () => {
 })
 
 describe('generateRepoId', () => {
-  it('生成固定长度 ID', () => {
+  it('生成非空 base64 ID', () => {
     const id = generateRepoId('/home/user/my-project')
-    expect(id.length).toBeLessThanOrEqual(12)
+    expect(id.length).toBeGreaterThan(0)
+    expect(() => Buffer.from(id, 'base64')).not.toThrow()
   })
 
   it('相同路径生成相同 ID', () => {
@@ -168,6 +169,12 @@ describe('generateRepoId', () => {
   it('不同路径生成不同 ID', () => {
     const id1 = generateRepoId('/path/one')
     const id2 = generateRepoId('/path/two')
+    expect(id1).not.toBe(id2)
+  })
+
+  it('同前缀路径不碰撞（回归）', () => {
+    const id1 = generateRepoId('/home/user/project-a')
+    const id2 = generateRepoId('/home/user/project-b')
     expect(id1).not.toBe(id2)
   })
 })

@@ -6,12 +6,12 @@
 
 /**
  * 生成仓库 ID
- * 前后端统一使用 base64 编码前 12 字符
+ * 前后端统一使用完整 base64 编码（截断会导致同前缀路径碰撞，如 /home/user/ 下的所有仓库）
  * @param {string} repoPath
  * @returns {string}
  */
 export function generateRepoId(repoPath) {
-  return Buffer.from(repoPath).toString('base64').slice(0, 12)
+  return Buffer.from(repoPath).toString('base64')
 }
 
 /**
@@ -38,36 +38,42 @@ export function generateTicker(path) {
  *
  * 不变量（恒成立）：high ≥ max(open, close) ≥ min(open, close) ≥ low ≥ 0
  *
+ * @param {object} commit - { oid, message, author, timestamp }
+ * @param {object} fileChange - { additions, deletions, oldContent?, newContent? }
  * @param {number} open
  * @param {number} close
- * @param {number} volume
- * @param {object} commit
- * @param {{additions?: number, deletions?: number}} [options]
  */
-export function createCandle(open, close, volume, commit, options) {
-  const hasWickData =
-    options !== undefined &&
-    (typeof options.additions === 'number' || typeof options.deletions === 'number')
+export function createCandle(commit, fileChange, open, close) {
+  const additions = fileChange?.additions ?? 0
+  const deletions = fileChange?.deletions ?? 0
 
   // 影线峰值/谷底
-  const peak = open + (options?.additions ?? 0)
-  const trough = Math.max(0, open - (options?.deletions ?? 0))
+  const peak = open + additions
+  const trough = Math.max(0, open - deletions)
 
   // high 至少为实体上端，low 至多为实体下端（防御性兜底，保证不变量恒成立）
-  const high = hasWickData ? Math.max(peak, open, close) : Math.max(open, close)
-  const low = hasWickData ? Math.min(trough, open, close) : Math.min(open, close)
+  const high = Math.max(peak, open, close)
+  const low = Math.min(trough, open, close)
 
-  return {
+  const candle = {
     time: commit.timestamp,
     open,
     high,
     low,
     close,
-    volume,
+    volume: additions + deletions,
     commitMessage: commit.message,
     commitHash: commit.oid.slice(0, 8),
     author: commit.author,
+    additions,
+    deletions,
   }
+
+  // 内容透传：仅当 fileChange 携带时附加（后端模式通常没有内容）
+  if (fileChange?.oldContent !== undefined) candle.oldContent = fileChange.oldContent
+  if (fileChange?.newContent !== undefined) candle.newContent = fileChange.newContent
+
+  return candle
 }
 
 /**
